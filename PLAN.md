@@ -100,6 +100,10 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - mllam-data-prep semantics, including second-difference `diff_std`.
   - Matches mllam-data-prep on real data to 2.5e-8 of each feature's spread; unit tests cover the block combination.
   - `--from-processed` for placeholder stats.
+- [x] Parallel segments (`--workers`) and a local chunk cache (`--cache-dir`).
+  - DANRA v0.5.0 is 3-hourly, float64, with time chunks of 256 steps (32 days). Without a cache, every block re-downloaded whole chunks.
+  - With the cache, everything is downloaded once: about 540 GB for DANRA. WB2 ERA5 is one global chunk per time step, about 1 TB.
+  - This machine has about 60 MB/s over WiFi, so expect hours.
 - [~] Full training-period stats run, in progress:
   - DANRA from the ECMWF object store and WB2 ERA5 from GCS, 2016-01-01 → 2019-10-22.
   - Logs: `artifact/build/stats-{interior,boundary}.log`.

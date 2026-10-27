@@ -200,8 +200,31 @@ def _step(config):
     return isodate.parse_duration(step) if isinstance(step, str) else step
 
 
+def _use_cache(config, cache_dir):
+    """
+    Read the remote inputs of `config` through a local fsspec file cache in
+    `cache_dir`. The source zarrs are chunked in time in much larger pieces
+    than a block (DANRA: 256 steps = 32 days), so without the cache every
+    block would download whole chunks again.
+    """
+    import fsspec
+
+    fsspec.config.conf["filecache"] = {"cache_storage": str(cache_dir)}
+    for input_config in config.inputs.values():
+        path = str(input_config.path)
+        if path.startswith(("http://", "https://", "s3://", "gs://")):
+            input_config.path = f"filecache::{path}"
+
+
 def _compute_segment(
-    fp_config, interior_config, start, end, counted_until, block_days, label
+    fp_config,
+    interior_config,
+    start,
+    end,
+    counted_until,
+    block_days,
+    label,
+    cache_dir=None,
 ):
     """
     The SplitStats (and feature coordinates) per category of start..end, read
@@ -210,6 +233,8 @@ def _compute_segment(
     process.
     """
     config = mdp.Config.from_yaml_file(fp_config)
+    if cache_dir is not None:
+        _use_cache(config, cache_dir)
     dim = config.output.splitting.dim
     step = _step(config)
     block = datetime.timedelta(days=block_days)
@@ -264,6 +289,7 @@ def compute_stats(
     interior_config=None,
     block_days=4,
     workers=1,
+    cache_dir=None,
 ):
     """
     The statistics (and splits) of the datastore of `fp_config` over its
@@ -300,6 +326,7 @@ def compute_stats(
             counted_until,
             block_days,
             f"{Path(fp_config).name} [{i + 1}/{workers}]",
+            cache_dir,
         )
         for i, (seg_start, seg_end, counted_until) in enumerate(segments)
     ]
@@ -377,6 +404,14 @@ def main():
         "%(default)s)",
     )
     parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="read the remote inputs through a local file cache here. "
+        "Needed for DANRA, whose 32-day time chunks would otherwise be "
+        "downloaded again for every block (~540 GB for the training "
+        "period); not useful for WB2 ERA5 (one chunk per time step)",
+    )
+    parser.add_argument(
         "--block-days",
         type=float,
         default=4,
@@ -418,6 +453,7 @@ def main():
                 / configs.interior_stats_datastore,
                 block_days=args.block_days,
                 workers=args.workers,
+                cache_dir=args.cache_dir,
             )
         fp = args.output_dir / f"{name}.zarr"
         ds.to_zarr(fp, mode="w", consolidated=True)
