@@ -37,7 +37,9 @@ dependencies = [
     "scipy",
     # as in real-prob-lam's `gpu` extra (2.12, the series CLARA's inference
     # was tested with); the container image uses its base image's torch
-    "torch>=2.10,<2.13",
+    # (NB: NVIDIA's aarch64 image has a pre-release, 2.10.0a0+...nv26.01,
+    # which is < 2.10)
+    "torch>=2.9,<2.13",
     "xarray",
 ]
 

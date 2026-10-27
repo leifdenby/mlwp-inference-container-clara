@@ -767,7 +767,7 @@ requires-dist = [
     { name = "requests" },
     { name = "s3fs", specifier = ">=2025.3.2" },
     { name = "scipy" },
-    { name = "torch", specifier = ">=2.10,<2.13", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "torch", specifier = ">=2.9,<2.13", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "universal-pathlib", specifier = ">=0.2.6" },
     { name = "xarray" },
