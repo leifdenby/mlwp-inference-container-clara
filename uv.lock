@@ -759,7 +759,7 @@ requires-dist = [
     { name = "isodate" },
     { name = "loguru" },
     { name = "mllam-data-prep" },
-    { name = "neural-lam", git = "https://github.com/leifdenby/real-prob-lam?subdirectory=neural-lam-dev-building-ml-lams&rev=47cc2fee58c6bab92209d9945c8bb816f531c40d" },
+    { name = "neural-lam", git = "https://github.com/leifdenby/real-prob-lam?subdirectory=neural-lam-dev-building-ml-lams&rev=d96b97212c63a42e23419553b78b36bbcd29d1b6" },
     { name = "numpy" },
     { name = "parse", specifier = ">=1.20.2" },
     { name = "pyproj" },
@@ -3011,7 +3011,7 @@ wheels = [
 [[package]]
 name = "neural-lam"
 version = "0.2.0"
-source = { git = "https://github.com/leifdenby/real-prob-lam?subdirectory=neural-lam-dev-building-ml-lams&rev=47cc2fee58c6bab92209d9945c8bb816f531c40d#47cc2fee58c6bab92209d9945c8bb816f531c40d" }
+source = { git = "https://github.com/leifdenby/real-prob-lam?subdirectory=neural-lam-dev-building-ml-lams&rev=d96b97212c63a42e23419553b78b36bbcd29d1b6#d96b97212c63a42e23419553b78b36bbcd29d1b6" }
 dependencies = [
     { name = "ai-models" },
     { name = "cartopy" },

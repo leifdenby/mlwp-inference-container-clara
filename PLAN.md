@@ -24,7 +24,7 @@ uploading them to S3.
 | Python package / CLI | `clara_inference` / `clara-inference` |
 | Environment variables | `CLARA_*` |
 | Image | `ghcr.io/leifdenby/mlwp-inference-container-clara` |
-| Model source | `leifdenby/real-prob-lam`, subdir `neural-lam-dev-building-ml-lams` (private), pinned at `47cc2fe` |
+| Model source | `leifdenby/real-prob-lam`, subdir `neural-lam-dev-building-ml-lams` (private), pinned at `d96b972` |
 
 ## Decisions
 

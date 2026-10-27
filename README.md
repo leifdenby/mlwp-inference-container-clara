@@ -78,14 +78,16 @@ model and differ from `train_model`'s defaults:
 
 Pinned in [pyproject.toml](pyproject.toml):
 
-- **neural-lam:** `leifdenby/real-prob-lam@47cc2fe` (subdirectory
+- **neural-lam:** `leifdenby/real-prob-lam@d96b972` (subdirectory
   `neural-lam-dev-building-ml-lams`, branch `prob-model-inference`). This
   repository is private, see [Building the image](#building-the-image). The
   branch adds:
   - the bf16 and single-GPU inference fixes;
   - `NEURAL_LAM_STRICT_LOAD=1`, which makes loading a checkpoint fail instead
     of silently keeping randomly initialised weights for missing or
-    mismatched parameters. The pipeline always sets it.
+    mismatched parameters. The pipeline always sets it;
+  - `NEURAL_LAM_SKIP_TEST_METRICS=1`, which skips the test-epoch metrics and
+    plots (there are no real targets in inference).
 - **mllam-data-prep:** `Erik-Wikingsson/mllam-data-prep-real@0589539`
   (`rect-boundary`, with `latlon-domain-crop`), as used for training.
 - **torch 2.12** (CUDA 13.0 index) in the uv environment. The image uses its

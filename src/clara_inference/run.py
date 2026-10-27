@@ -365,6 +365,8 @@ class Forecast:
         - strict checkpoint loading (NEURAL_LAM_STRICT_LOAD=1): neural-lam
           would otherwise keep randomly initialised weights for missing or
           mismatched parameters
+        - no test metrics (NEURAL_LAM_SKIP_TEST_METRICS=1): the "targets"
+          are the DINI forecast, and the metric plots fail for one sample
         - wandb offline (neural-lam always creates a wandb logger); it
           writes its run dir relative to the CWD
         - empty --eval_init_times: no restriction to 00/12 UTC forecasts
@@ -382,6 +384,8 @@ class Forecast:
             "WANDB_MODE": "offline",
             "WANDB_DIR": wandb_dir,
             "NEURAL_LAM_STRICT_LOAD": "1",
+            # no metrics/plots against the (DINI) "targets" at the end
+            "NEURAL_LAM_SKIP_TEST_METRICS": "1",
         }
         self.run_step(
             "3. forecast",

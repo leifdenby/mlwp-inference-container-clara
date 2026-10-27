@@ -46,8 +46,10 @@ Usage:
 import argparse
 import copy
 import datetime
+import multiprocessing
 import tempfile
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import isodate
@@ -86,11 +88,17 @@ class RunningStats:
     def add(self, values):
         """`values`: (..., n_features); all but the last axis reduced."""
         x = values.reshape(-1, values.shape[-1]).astype("f8")
-        n_b = x.shape[0]
-        if n_b == 0:
+        if x.shape[0] == 0:
             return
         mean_b = x.mean(axis=0)
-        m2_b = ((x - mean_b) ** 2).sum(axis=0)
+        self._combine(x.shape[0], mean_b, ((x - mean_b) ** 2).sum(axis=0))
+
+    def merge(self, other):
+        """Add the values summarised by another RunningStats."""
+        if other.n:
+            self._combine(other.n, other.mean, other.m2)
+
+    def _combine(self, n_b, mean_b, m2_b):
         n = self.n + n_b
         delta = mean_b - self.mean
         self.mean = self.mean + delta * n_b / n
@@ -109,11 +117,20 @@ class SplitStats:
     first and std of the second time differences (see module docstring).
     """
 
-    def __init__(self, n_features):
+    def __init__(self, n_features, counted_until=None):
+        """
+        `counted_until`: for a segment of a split, the last time counted by
+        the previous segment (the segments overlap by two times).
+        """
         self.values = RunningStats(n_features)
         self.diff1 = RunningStats(n_features)
         self.diff2 = RunningStats(n_features)
-        self.last_time = None
+        self.last_time = counted_until
+
+    def merge(self, other):
+        """Add the statistics of a following segment of the split."""
+        for name in ["values", "diff1", "diff2"]:
+            getattr(self, name).merge(getattr(other, name))
 
     def add_block(self, times, x):
         """
@@ -178,23 +195,27 @@ def _block_config(config, start, end):
     return config
 
 
-def compute_stats(
-    fp_config, start=None, end=None, interior_config=None, block_days=4
+def _step(config):
+    step = config.output.coord_ranges[config.output.splitting.dim].step
+    return isodate.parse_duration(step) if isinstance(step, str) else step
+
+
+def _compute_segment(
+    fp_config, interior_config, start, end, counted_until, block_days, label
 ):
     """
-    The statistics (and splits) of the datastore of `fp_config` over its
-    training split (optionally restricted to start..end), as
-    mllam-data-prep computes them.
+    The SplitStats (and feature coordinates) per category of start..end, read
+    in blocks; times up to `counted_until` were counted by the previous
+    segment. Also the statics (from the first block). Run in a worker
+    process.
     """
     config = mdp.Config.from_yaml_file(fp_config)
     dim = config.output.splitting.dim
-    split = config.output.splitting.splits["train"]
-    start = datetime.datetime.fromisoformat(str(start or split.start))
-    end = datetime.datetime.fromisoformat(str(end or split.end))
-    step = config.output.coord_ranges[dim].step
-    step = isodate.parse_duration(step) if isinstance(step, str) else step
+    step = _step(config)
     block = datetime.timedelta(days=block_days)
-
+    counted_until = (
+        None if counted_until is None else np.datetime64(counted_until, "ns")
+    )
     stats = {}
     static = None
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -204,7 +225,7 @@ def compute_stats(
             )
         block_start = start
         t0 = time.perf_counter()
-        while block_start < end:
+        while True:
             block_end = min(block_start + block, end)
             ds = mdp.create_dataset(
                 config=_block_config(config, block_start, block_end)
@@ -216,8 +237,8 @@ def compute_stats(
                 x = ds[category].transpose(dim, "grid_index", ...).values
                 if category not in stats:
                     stats[category] = (
-                        SplitStats(x.shape[-1]),
-                        ds[f"{category}_feature"],
+                        SplitStats(x.shape[-1], counted_until=counted_until),
+                        ds[f"{category}_feature"].load(),
                     )
                 stats[category][0].add_block(times, x)
             if static is None and "static" in ds:
@@ -225,15 +246,75 @@ def compute_stats(
             elapsed = time.perf_counter() - t0
             done = (block_end - start) / (end - start)
             logger.info(
-                f"{fp_config.name}: {block_start:%Y-%m-%d} .. "
-                f"{block_end:%Y-%m-%d} done ({100 * done:.1f}%, "
-                f"{elapsed / 60:.0f} min, ~{elapsed / done / 60 - elapsed / 60:.0f}"
-                " min left)"
+                f"{label}: {block_start:%Y-%m-%d} .. {block_end:%Y-%m-%d} "
+                f"done ({100 * done:.1f}% of segment, {elapsed / 60:.0f} "
+                f"min, ~{elapsed / done / 60 - elapsed / 60:.0f} min left)"
             )
-            # the next block overlaps this one by two time steps
-            block_start = block_end - 2 * step
             if block_end >= end:
                 break
+            # the next block overlaps this one by two time steps
+            block_start = block_end - step
+    return stats, static
+
+
+def compute_stats(
+    fp_config,
+    start=None,
+    end=None,
+    interior_config=None,
+    block_days=4,
+    workers=1,
+):
+    """
+    The statistics (and splits) of the datastore of `fp_config` over its
+    training split (optionally restricted to start..end), as
+    mllam-data-prep computes them. The period is split into `workers`
+    segments (overlapping by two time steps, for the differences), computed
+    in parallel processes and combined exactly.
+    """
+    config = mdp.Config.from_yaml_file(fp_config)
+    split = config.output.splitting.splits["train"]
+    start = datetime.datetime.fromisoformat(str(start or split.start))
+    end = datetime.datetime.fromisoformat(str(end or split.end))
+    step = _step(config)
+
+    # segment boundaries on the time step grid
+    n_steps = int((end - start) / step)
+    bounds = [start + (n_steps * i // workers) * step for i in range(workers)]
+    bounds.append(end)
+    segments = []
+    for i in range(workers):
+        seg_start, seg_end = bounds[i], bounds[i + 1]
+        counted_until = None
+        if i > 0:
+            # overlap the previous segment (ending at seg_start) by two times
+            counted_until, seg_start = seg_start, seg_start - step
+        segments.append((seg_start, seg_end, counted_until))
+
+    args = [
+        (
+            fp_config,
+            interior_config,
+            seg_start,
+            seg_end,
+            counted_until,
+            block_days,
+            f"{Path(fp_config).name} [{i + 1}/{workers}]",
+        )
+        for i, (seg_start, seg_end, counted_until) in enumerate(segments)
+    ]
+    if workers == 1:
+        results = [_compute_segment(*args[0])]
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            results = list(pool.map(_compute_segment, *zip(*args)))
+
+    stats, static = results[0]
+    for seg_stats, _ in results[1:]:
+        for category, (split_stats, _) in seg_stats.items():
+            stats[category][0].merge(split_stats)
 
     data_vars = {}
     for category, (split_stats, features) in stats.items():
@@ -287,6 +368,15 @@ def main():
     parser.add_argument("--start", help="restrict the period (ISO8601)")
     parser.add_argument("--end", help="restrict the period (ISO8601)")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="parallel processes, each computing a segment of the period "
+        "(reading is latency bound, so this speeds it up nearly linearly; "
+        "memory: ~4 GB per worker and block day for DANRA) (default: "
+        "%(default)s)",
+    )
+    parser.add_argument(
         "--block-days",
         type=float,
         default=4,
@@ -327,6 +417,7 @@ def main():
                 interior_config=args.configs
                 / configs.interior_stats_datastore,
                 block_days=args.block_days,
+                workers=args.workers,
             )
         fp = args.output_dir / f"{name}.zarr"
         ds.to_zarr(fp, mode="w", consolidated=True)

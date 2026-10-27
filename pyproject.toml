@@ -100,8 +100,8 @@ explicit = true
 # CLARA's training code: neural-lam in leifdenby/real-prob-lam (private; git
 # authenticates with the developer's credentials, the container build with a
 # token build secret), branch prob-model-inference: bf16/single-GPU inference
-# fixes and NEURAL_LAM_STRICT_LOAD
-neural-lam = { git = "https://github.com/leifdenby/real-prob-lam", rev = "47cc2fee58c6bab92209d9945c8bb816f531c40d", subdirectory = "neural-lam-dev-building-ml-lams" }
+# fixes, NEURAL_LAM_STRICT_LOAD and NEURAL_LAM_SKIP_TEST_METRICS
+neural-lam = { git = "https://github.com/leifdenby/real-prob-lam", rev = "d96b97212c63a42e23419553b78b36bbcd29d1b6", subdirectory = "neural-lam-dev-building-ml-lams" }
 torch = { index = "pytorch-cu130" }
 
 [build-system]

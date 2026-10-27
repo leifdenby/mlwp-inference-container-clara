@@ -47,6 +47,27 @@ def test_split_stats_as_mllam_data_prep(block):
         np.testing.assert_allclose(result[op], values, rtol=1e-10, err_msg=op)
 
 
+def test_split_stats_segments_merge_exactly():
+    """Segments overlapping by two times, as computed by parallel workers."""
+    rng = np.random.default_rng(2)
+    n_times = 30
+    times = np.arange(n_times)
+    x = rng.normal(size=(n_times, 4, 2)).cumsum(axis=0)
+    whole = SplitStats(2)
+    whole.add_block(times, x)
+    # segments [0, 12], [11, 20] (counted until 12), [19, 29] (until 20)
+    first = SplitStats(2)
+    first.add_block(times[:13], x[:13])
+    for start, counted_until, end in [(11, 12, 21), (19, 20, 30)]:
+        seg = SplitStats(2, counted_until=counted_until)
+        seg.add_block(times[start:end], x[start:end])
+        first.merge(seg)
+    for op, values in whole.result().items():
+        np.testing.assert_allclose(
+            first.result()[op], values, rtol=1e-10, err_msg=op
+        )
+
+
 def test_split_stats_needs_overlap():
     stats = SplitStats(1)
     x = np.zeros((5, 2, 1))
