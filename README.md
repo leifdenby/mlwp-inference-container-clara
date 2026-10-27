@@ -107,6 +107,31 @@ Pinned in [pyproject.toml](pyproject.toml):
 
 The figure is made with `dev-utils/plot_domain.py`.
 
+## Example forecast
+
+The forecast: analysis 2026-10-26T06Z, +18 h, 5 members, run on a DGX Spark.
+- Initial states are from DINI; the boundary is IFS open data from the 00Z cycle (made with `dev-utils/make_ifs_boundary_zarr.py`).
+- It's compared with the DINI forecast from the same analysis, regridded to the DANRA grid. DINI is a forecast too, not the truth, so the RMSE shows how far apart the two models are.
+
+> **Interim statistics.** This forecast was normalised with the statistics from ANNA's artifact (`dev-utils/stats_from_anna.py`). They have the same features and are computed the same way, but over ANNA's training period (2000-01-01 → 2018-10-29). CLARA's own were computed over 2016-01-01 → 2019-10-22, as recorded in the checkpoint.
+>
+> A few grid points have values outside physical ranges: relative humidity from −0.48 to 2.35, and night-time shortwave down to −104 W/m².
+
+![CLARA ensemble mean and spread of t2m, and DINI's t2m, at +18 h](docs/clara_example_t2m_mslp.png)
+
+![10 m wind speed of the five CLARA members and the ensemble mean at +18 h](docs/clara_example_members.png)
+
+![Ensemble-mean RMSE against DINI and ensemble spread by lead time](docs/clara_example_scores.png)
+
+At +18 h the ensemble-mean RMSE against DINI is:
+- t2m: 0.76 K
+- mslp: 0.7 hPa
+- 10 m wind components: 1.3–1.8 m/s
+
+The ensemble spread grows with lead time and is close to the RMSE, a little below it.
+
+The figures are made with `dev-utils/plot_example_forecast.py`, and the numbers come from `dev-utils/check_forecast_output.py`.
+
 ## Configs
 
 The trained model was set up with these configs, in

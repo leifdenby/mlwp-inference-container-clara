@@ -153,6 +153,7 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - [x] `scripts/build_image.sh` (token from `gh auth token`), `scripts/run_inference_container.sh`.
 - [x] CI: pytest and container build/publish with the `REAL_PROB_LAM_TOKEN` secret and `PACKAGE_URL`/`PACKAGE_MD5` variables.
 - [ ] Build the image locally and run a forecast in it.
+- [x] Example forecast figures in the README (`dev-utils/plot_example_forecast.py` → `docs/clara_example_*.png`), from the run with ANNA's stats.
 
 ## Phase 3: tests (CPU)
 
