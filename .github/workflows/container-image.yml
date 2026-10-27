@@ -1,0 +1,155 @@
+# Build the inference image (x86_64) on every push and pull request, and
+# publish it to ghcr.io for `v*` tags (as `<tag>` and `latest`).
+#
+# The inference package comes from Zenodo record 23293148 (the PACKAGE_URL
+# and PACKAGE_MD5 defaults in the Containerfile, also in
+# scripts/build_image.sh). Its files can't be downloaded while the record is
+# a draft, so the build fails until it's published.
+name: Build Container
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mlwp-inference-container-anna
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # all tags, for the version
+
+      - &free-disk-space
+        name: Free disk space (the base image is large)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - &prepare-context
+        name: Prepare the build context
+        # The Containerfile always copies LOCAL_ARTIFACT_DIR: an empty
+        # directory with ARTIFACT_SOURCE=zenodo. Check that the package can
+        # be downloaded from Zenodo (not while the record is a draft) or its
+        # GitHub release mirror.
+        run: |
+          mkdir -p artifact/build/.empty
+          arg() { sed -n "s/^ARG $1=\"\(.*\)\"$/\1/p" Containerfile; }
+          url=$(arg PACKAGE_URL)
+          mirror=$(arg PACKAGE_MIRROR_URL)
+          check() {
+            curl -sfIL --connect-timeout 30 --retry 2 --retry-delay 10 \
+              --retry-all-errors -o /dev/null "$1"
+          }
+          if ! check "$url"; then
+            if check "$mirror"; then
+              echo "::warning::can't download $url, the build uses the" \
+                "mirror $mirror"
+            else
+              echo "::error::can't download the inference package $url" \
+                "or its mirror $mirror (is the Zenodo record published?)"
+              exit 1
+            fi
+          fi
+
+      - &version
+        name: Get the package version from the git tag
+        # the build context has no .git, so the Containerfile gets the
+        # setuptools-scm version as a build arg
+        id: version
+        run: |
+          version=$(uvx --from setuptools-scm python -m setuptools_scm)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "anna-inference version $version"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Containerfile
+          build-args: IMAGE_VERSION=${{ steps.version.outputs.version }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish:
+    name: Publish image
+    needs: build
+    if: >-
+      github.repository_owner == 'dmidk'
+      && github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # all tags, for the version
+
+      - *free-disk-space
+
+      - *prepare-context
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - *version
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Containerfile
+          build-args: IMAGE_VERSION=${{ steps.version.outputs.version }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

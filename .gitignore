@@ -1,0 +1,14 @@
+*.pyc
+__pycache__/
+*.egg-info/
+.venv
+.env
+# built inference artifacts (packages, checkpoints) and their inputs
+artifact/build/
+*.zip
+*.zarr/
+*.ckpt
+# forecast working directories and local development data
+inference_workdir/
+dev-data/
+wandb/

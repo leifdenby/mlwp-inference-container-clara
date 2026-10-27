@@ -1,0 +1,20 @@
+# Keep the build context small (also used by podman). The image only needs
+# pyproject.toml, README.md, src/ and the assembled package
+# directories in artifact/build/ (LOCAL_ARTIFACT_DIR in scripts/build_image.sh)
+.git/
+.venv/
+inference_workdir/
+dev-data/
+tmp/
+tests/
+dev-utils/
+docs/
+artifact/*
+!artifact/build/
+artifact/build/*.zip
+artifact/build/*.tmp
+**/*.ckpt.tmp
+.devcontainer/
+**/__pycache__/
+**/*.egg-info/
+**/.DS_Store
