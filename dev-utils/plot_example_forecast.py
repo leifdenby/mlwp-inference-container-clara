@@ -6,7 +6,8 @@ workdir):
 
 - `clara_example_t2m_mslp.png`: ensemble-mean t2m with mslp contours, the
   ensemble spread of t2m and DINI's t2m, at the last valid time
-- `clara_example_members.png`: 10 m wind speed of each member and of the
+- `clara_example_members.png`: 10 m wind speed and net outgoing longwave
+  radiation at the surface (-lwavr0m) of each member and of the
   ensemble mean, at the last valid time
 - `clara_example_scores.png`: ensemble-mean rmse against DINI and ensemble
   spread by lead time (the scores of `check_forecast_output.py`)
@@ -145,28 +146,45 @@ _colorbar(fig, im_t, [0.68, 0.12, 0.3, 0.03], "2 m temperature (°C)")
 _suptitle(fig, f"CLARA example forecast: {when}")
 _save(fig, "clara_example_t2m_mslp.png")
 
-# 2. 10 m wind speed of each member and of the ensemble mean
-wind = np.hypot(sl.u10m.sel(time=valid), sl.v10m.sel(time=valid)).load()
-wind_mean = np.hypot(
-    sl.u10m.sel(time=valid).mean(MEMBER), sl.v10m.sel(time=valid).mean(MEMBER)
-).load()
-n_cols = 3
-n_rows = int(np.ceil((n_members + 1) / n_cols))
-fig = plt.figure(figsize=(13, 3.3 * n_rows + 0.9), facecolor=SURFACE)
-height = 0.84 / n_rows
-vmax = float(np.percentile(wind, 99.5))
-stamps = [(f"member {int(m)}", wind.sel({MEMBER: m})) for m in wind[MEMBER]]
-stamps.append(("ensemble mean (of u and v)", wind_mean))
-for i, (title, da) in enumerate(stamps):
-    row, col = divmod(i, n_cols)
-    ax = _map_axes(
-        fig,
-        [0.02 + col * 0.33, 0.93 - (row + 1) * height + 0.02, 0.3,
-         height - 0.05],
-    )
-    im = _field(ax, da, cmap="YlGnBu", vmin=0, vmax=vmax)
-    _title(ax, title)
-_colorbar(fig, im, [0.35, 0.075, 0.3, 0.018], "10 m wind speed (m/s)")
+# 2. 10 m wind speed and net outgoing longwave radiation at the surface
+# (DANRA has no top-of-atmosphere OLR; lwavr0m is the net surface longwave,
+# positive downwards, so -lwavr0m is small under clouds) of each member
+# (columns) and of the ensemble mean
+u10m, v10m = sl.u10m.sel(time=valid), sl.v10m.sel(time=valid)
+wind = np.hypot(u10m, v10m).load()
+wind_mean = np.hypot(u10m.mean(MEMBER), v10m.mean(MEMBER)).load()
+olr = -sl.lwavr0m.sel(time=valid).load()
+rows = [
+    (
+        wind,
+        wind_mean,
+        "ensemble mean (of u and v)",
+        dict(cmap="YlGnBu", vmin=0, vmax=float(np.percentile(wind, 99.5))),
+        "10 m wind speed (m/s)",
+    ),
+    (
+        olr,
+        olr.mean(MEMBER),
+        "ensemble mean",
+        dict(cmap="Greys", vmin=0, vmax=float(np.percentile(olr, 99.5))),
+        "net outgoing longwave\nat the surface (W/m²)",
+    ),
+]
+n_cols = n_members + 1
+fig = plt.figure(figsize=(3 * n_cols + 1.6, 5.8), facecolor=SURFACE)
+width = 0.86 / n_cols
+for row, (da, da_mean, mean_title, style, label) in enumerate(rows):
+    bottom = 0.5 - row * 0.45
+    stamps = [(f"member {int(m)}", da.sel({MEMBER: m})) for m in da[MEMBER]]
+    stamps.append((mean_title, da_mean))
+    for col, (title, field) in enumerate(stamps):
+        ax = _map_axes(fig, [0.01 + col * width, bottom, width - 0.008, 0.36])
+        im = _field(ax, field, **style)
+        _title(ax, title)
+    cb = fig.colorbar(im, cax=fig.add_axes([0.885, bottom + 0.03, 0.008, 0.3]))
+    cb.set_label(label, color=INK_2, fontsize=9)
+    cb.ax.tick_params(colors=INK_2, labelsize=8)
+    cb.outline.set_edgecolor(GRID)
 _suptitle(fig, f"CLARA example forecast, members: {when}")
 _save(fig, "clara_example_members.png")
 

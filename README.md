@@ -119,7 +119,9 @@ The forecast: analysis 2026-10-26T06Z, +18 h, 5 members, run on a DGX Spark.
 
 ![CLARA ensemble mean and spread of t2m, and DINI's t2m, at +18 h](docs/clara_example_t2m_mslp.png)
 
-![10 m wind speed of the five CLARA members and the ensemble mean at +18 h](docs/clara_example_members.png)
+![10 m wind speed and net outgoing longwave radiation at the surface (−lwavr0m; low under clouds) of the five CLARA members and the ensemble mean at +18 h](docs/clara_example_members.png)
+
+DANRA, and so CLARA, has no top-of-atmosphere OLR. The longwave row shows the net longwave at the surface instead, sign-flipped so that it is positive upwards. Clouds keep it small, so it looks a little like a satellite image. The members differ more in their clouds than in their winds.
 
 ![Ensemble-mean RMSE against DINI and ensemble spread by lead time](docs/clara_example_scores.png)
 
