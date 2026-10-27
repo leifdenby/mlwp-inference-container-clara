@@ -1,5 +1,5 @@
 """
-Sanity-check an ANNA forecast written by `python -m anna_inference`: the
+Sanity-check an ANNA forecast written by `python -m clara_inference`: the
 valid times, that all values are finite and within physical ranges, and how
 far the forecast is from the DINI forecast it was started from (regridded
 to the DANRA grid,

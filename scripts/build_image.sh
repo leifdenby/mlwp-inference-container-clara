@@ -9,7 +9,7 @@ CONTAINER_APP=${CONTAINER_APP:-podman}
 
 # Configuration
 BUILD_LOG_LEVEL=DEBUG
-IMAGE_NAME=${IMAGE_NAME:-"mlwp-inference-container-anna:latest"}
+IMAGE_NAME=${IMAGE_NAME:-"mlwp-inference-container-clara:latest"}
 
 HTTP_PROXY=""
 HTTPS_PROXY=""
@@ -42,7 +42,7 @@ fi
 # - "zenodo" (default) downloads the published inference package
 #   (PACKAGE_URL, checked against PACKAGE_MD5);
 # - "local" uses a package directory LOCAL_ARTIFACT_DIR assembled with
-#   anna_inference.artifact.assemble (or collect).
+#   clara_inference.artifact.assemble (or collect).
 # The model checkpoint is downloaded from Zenodo during the build in both
 # cases (unless present).
 ARTIFACT_SOURCE=${ARTIFACT_SOURCE:-zenodo}
@@ -52,7 +52,7 @@ PACKAGE_URL=${PACKAGE_URL:-https://zenodo.org/records/23293148/files/anna-danra-
 PACKAGE_MD5=${PACKAGE_MD5:-d453733a56c381d63922806cd4b25472}
 # copies of the package and the checkpoint (same md5s) in a dmidk GitHub
 # release, used if Zenodo is unavailable
-MIRROR=https://github.com/dmidk/mlwp-inference-container-anna/releases/download/artifact-anna-danra-2026-10-11
+MIRROR=https://github.com/dmidk/mlwp-inference-container-clara/releases/download/artifact-anna-danra-2026-10-11
 PACKAGE_MIRROR_URL=${PACKAGE_MIRROR_URL:-$MIRROR/anna-danra-2026-10-11.zip}
 CHECKPOINT_MIRROR_URL=${CHECKPOINT_MIRROR_URL:-$MIRROR/danra_model.ckpt}
 
@@ -61,7 +61,7 @@ if [ "$ARTIFACT_SOURCE" = "local" ]; then
 	LOCAL_ARTIFACT_DIR=${LOCAL_ARTIFACT_DIR:-artifact/build/anna-local}
 	if [ ! -f "${LOCAL_ARTIFACT_DIR}/artifact.yaml" ]; then
 		echo "Error: ARTIFACT_SOURCE=local but ${LOCAL_ARTIFACT_DIR} hasn't been assembled."
-		echo "Create it with anna_inference.artifact.assemble (see"
+		echo "Create it with clara_inference.artifact.assemble (see"
 		echo "artifact/README.md), or set ARTIFACT_SOURCE=zenodo."
 		exit 1
 	fi
@@ -101,7 +101,7 @@ if [ -z "$IMAGE_VERSION" ]; then
 	IMAGE_VERSION=$(uvx --from setuptools-scm python -m setuptools_scm 2>/dev/null)
 	IMAGE_VERSION=${IMAGE_VERSION:-0.0.0+unknown}
 fi
-echo "Info: anna-inference version $IMAGE_VERSION"
+echo "Info: clara-inference version $IMAGE_VERSION"
 
 # Pull base image with proxy
 HTTP_PROXY="$PULL_PROXY" HTTPS_PROXY="$PULL_PROXY" ${CONTAINER_APP} --log-level="$BUILD_LOG_LEVEL" pull "$BASE_IMAGE"

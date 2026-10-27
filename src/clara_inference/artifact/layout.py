@@ -1,33 +1,31 @@
 """
-The layout of an ANNA inference artifact, shared by the tools that build it
-(`collect` on the training machine, `assemble` for the reconstruction from
-gefion-1) and by the checks. The artifact describes the model **as
-trained** (DANRA interior, ERA5 boundary), nothing about the operational
-boundaries (DINI, IFS), which are part of this package:
+The layout of a CLARA inference artifact, shared by the tools that build it
+(`assemble`, `compute_stats`) and the checks. The artifact describes the model
+**as trained**:
 
-    configs/model.yaml              the model: checkpoint, graph recipe,
-                                    train_model arguments and the training
-                                    neural-lam config
-    configs/<neural-lam config>     the training neural-lam config, with
-                                    datastore config paths as sibling files
+    configs/model.yaml              the model: checkpoint, graph, train_model
+                                    arguments and the training neural-lam
+                                    config
+    configs/<neural-lam config>     the training neural-lam config, naming the
+                                    datastore configs as sibling files
     configs/<datastore config>      the training interior and boundary
-                                    datastore configs it names
-    configs/<boundary>.zarr         the "stats datastore" neural-lam opens
-                                    for `overload_stats_path` (statistics and
-                                    splits of the training boundary datastore)
-    stats/<datastore>.stats.zarr    training statistics of the training
-                                    interior and boundary datastores
-    grids/<interior>.grid.zarr      interior grid (x, y, lat, lon) and statics,
-                                    the target grid for regridding DINI
-    grids/<boundary>.grid.zarr      lat/lon of the training boundary points
+                                    datastore configs, and the two configs of
+                                    the datastores the statistics come from
+                                    (`overload_stats_path`)
+    configs/<stats datastore>.zarr  next to each statistics datastore config:
+                                    the training statistics (and splits),
+                                    what neural-lam reads for
+                                    `overload_stats_path`
+    grids/<interior>.grid.zarr      interior (DANRA) grid (x, y, lat, lon) and
+                                    statics, the target grid for regridding
+                                    DINI
+    grids/<boundary>.grid.zarr      the boundary grid: the 0.25 deg latitude
+                                    band of the training boundary points in
+                                    training order, with the ERA5 statics
+    graphs/<graph name>/            the graph the model was trained with
     artifact.yaml                   provenance
     README.md                       description (artifact/package-README.md)
-    <checkpoint.artifact_path>      the checkpoint (never in the published
-                                    package zip)
-
-The datastore names (config file names without `.yaml`) follow from the
-training neural-lam config, so the same layout serves any model trained
-with an interior and a boundary datastore.
+    <checkpoint.artifact_path>      the checkpoint (not in the package zip)
 """
 import zipfile
 from pathlib import Path
@@ -35,17 +33,31 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from anna_inference import model_configs as mc
+from clara_inference import model_configs as mc
 
 CONFIGS = "configs"
-STATS = "stats"
 GRIDS = "grids"
+GRAPHS = "graphs"
 ARTIFACT_META = "artifact.yaml"
 README = "README.md"
+GRAPH_FILES = [
+    "g2m_edge_index.pt",
+    "g2m_features.pt",
+    "g2m_node_features.pt",
+    "m2m_edge_index.pt",
+    "m2m_features.pt",
+    "m2m_node_features.pt",
+]
 
 
-def stats_path(artifact_dir, datastore_config):
-    return Path(artifact_dir) / STATS / f"{_name(datastore_config)}.stats.zarr"
+def _name(datastore_config):
+    return mc.TrainingConfigs.name(datastore_config)
+
+
+def model_description(artifact_dir):
+    return yaml.safe_load(
+        (Path(artifact_dir) / CONFIGS / "model.yaml").read_text()
+    )
 
 
 def grid_path(artifact_dir, datastore_config):
@@ -57,10 +69,13 @@ def stats_datastore_path(artifact_dir, datastore_config):
     return Path(artifact_dir) / CONFIGS / f"{_name(datastore_config)}.zarr"
 
 
+def graph_path(artifact_dir):
+    name = model_description(artifact_dir)["graph"]["name"]
+    return Path(artifact_dir) / GRAPHS / name
+
+
 def checkpoint_path(artifact_dir):
-    model = yaml.safe_load(
-        (Path(artifact_dir) / CONFIGS / "model.yaml").read_text()
-    )
+    model = model_description(artifact_dir)
     return Path(artifact_dir) / model["checkpoint"]["artifact_path"]
 
 
@@ -79,18 +94,17 @@ def required_paths(artifact_dir, checkpoint=False):
         configs_dir / training.neural_lam_config,
         configs_dir / training.interior_datastore,
         configs_dir / training.boundary_datastore,
-        stats_datastore_path(artifact_dir, training.boundary_datastore),
         artifact_dir / ARTIFACT_META,
         artifact_dir / README,
+        grid_path(artifact_dir, training.interior_datastore),
+        grid_path(artifact_dir, training.boundary_datastore),
     }
-    for datastore in [
-        training.interior_datastore,
-        training.boundary_datastore,
-    ]:
+    for stats_config in training.stats_datastores:
         paths |= {
-            stats_path(artifact_dir, datastore),
-            grid_path(artifact_dir, datastore),
+            configs_dir / stats_config,
+            stats_datastore_path(artifact_dir, stats_config),
         }
+    paths |= {graph_path(artifact_dir) / fn for fn in GRAPH_FILES}
     if checkpoint:
         paths.add(checkpoint_path(artifact_dir))
     return sorted(paths)
@@ -98,10 +112,10 @@ def required_paths(artifact_dir, checkpoint=False):
 
 def check_artifact(artifact_dir, checkpoint=False):
     """
-    Check an artifact directory: all required paths exist, it has nothing
-    in configs/ besides the training configs and the stats datastore (no
-    operational configs), and the stats datastore loads in neural-lam.
-    Raises ValueError on problems.
+    Check an artifact directory: all required paths exist, nothing in
+    configs/ besides the training configs and stats datastores, and the
+    stats datastores load in neural-lam with sane statistics. Raises
+    ValueError on problems.
     """
     artifact_dir = Path(artifact_dir)
     required = required_paths(artifact_dir, checkpoint=checkpoint)
@@ -116,34 +130,44 @@ def check_artifact(artifact_dir, checkpoint=False):
         for p in sorted(configs_dir.iterdir())
         if p not in required
     ]
-    training = training_configs(artifact_dir)
     if problems:
         raise ValueError(
             f"inference artifact {artifact_dir}: " + "; ".join(problems)
         )
-    check_stats_datastore(configs_dir / training.boundary_datastore)
+    training = training_configs(artifact_dir)
+    check_stats_datastore(
+        configs_dir / training.interior_stats_datastore,
+        categories=["state", "forcing", "static"],
+    )
+    check_stats_datastore(
+        configs_dir / training.boundary_stats_datastore,
+        categories=["forcing", "static"],
+    )
 
 
-def check_stats_datastore(fp_boundary_config):
+def check_stats_datastore(fp_config, categories):
     """
-    Open the stats datastore next to `fp_boundary_config` as neural-lam does
-    (`overload_stats_path`) and check the boundary statistics it uses.
+    Open the stats datastore next to `fp_config` as neural-lam does
+    (`overload_stats_path`) and check its statistics.
     """
     from neural_lam.datastore.mdp import MDPDatastore
 
-    fp_zarr = Path(fp_boundary_config).with_suffix(".zarr")
+    fp_zarr = Path(fp_config).with_suffix(".zarr")
     if not fp_zarr.exists():
         # MDPDatastore would otherwise try to build the full training dataset
         raise FileNotFoundError(fp_zarr)
-    datastore = MDPDatastore(config_path=fp_boundary_config)
-    for category in ["forcing", "static"]:
+    datastore = MDPDatastore(config_path=fp_config)
+    for category in categories:
         ds = datastore.get_standardization_dataarray(category=category)
-        for op in ["mean", "std"]:
-            values = ds[f"{category}_{op}"].values
+        for v in ds.data_vars:
+            values = ds[v].values
             if values.size == 0 or not np.isfinite(values).all():
-                raise ValueError(f"bad {category}_{op} in {fp_zarr}")
-        if not (ds[f"{category}_std"].values > 0).all():
-            raise ValueError(f"non-positive {category}_std in {fp_zarr}")
+                raise ValueError(f"bad {v} in {fp_zarr}")
+        std = ds[f"{category}_std"].values
+        # constant static/forcing features (e.g. a land-sea mask over sea
+        # only) can have zero std; the state can't
+        if (std < 0).any() or (category == "state" and not (std > 0).all()):
+            raise ValueError(f"bad {category}_std in {fp_zarr}")
 
 
 def write_zip(artifact_dir, fp_zip):
@@ -161,7 +185,3 @@ def write_zip(artifact_dir, fp_zip):
             if fp.is_file() and fp != fp_checkpoint:
                 zf.write(fp, fp.relative_to(artifact_dir))
     fp_tmp.replace(fp_zip)
-
-
-def _name(datastore_config):
-    return mc.TrainingConfigs.name(datastore_config)

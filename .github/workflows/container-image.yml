@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/mlwp-inference-container-anna
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mlwp-inference-container-clara
 
 jobs:
   build:
@@ -81,7 +81,7 @@ jobs:
         run: |
           version=$(uvx --from setuptools-scm python -m setuptools_scm)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "anna-inference version $version"
+          echo "clara-inference version $version"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

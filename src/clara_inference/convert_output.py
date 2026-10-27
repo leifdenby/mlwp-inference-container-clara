@@ -1,19 +1,20 @@
 """
-Convert the neural-lam evaluation output of ANNA into DANRA-like datasets.
+Convert the neural-lam evaluation output of CLARA into DANRA-like datasets.
 
 neural-lam (`train_model --eval test --save_eval_to_zarr_path ...`) writes the
-predicted (de-normalised) state as `state(start_time,
-elapsed_forecast_duration, state_feature, x, y)`. This splits the state
-features back into variables:
+predicted (de-normalised) ensemble state as `state(start_time,
+elapsed_forecast_duration, member, state_feature, x, y)` (any dim order).
+This splits the state features back into variables:
 
 - `single_levels.zarr`: pres_seasurface, t2m, u10m, v10m, pres0m, lwavr0m,
-  swavr0m with dims (time, y, x)
-- `pressure_levels.zarr`: z, t, r, u, v, tw with dims (time, pressure, y, x)
+  swavr0m with dims (ensemble_member, time, y, x)
+- `pressure_levels.zarr`: z, t, r, u, v, tw with dims (ensemble_member,
+  time, pressure, y, x)
 
 where `time` is the valid time, on the DANRA grid (with lat/lon from the
-DANRA grid in the inference artifact). Conventions are those of DANRA/ANNA:
-winds are relative to the DANRA (Lambert) grid and relative humidity is a
-fraction (0-1).
+DANRA grid in the inference artifact). Conventions are those of DANRA (as for
+ANNA): winds are relative to the DANRA (Lambert) grid and relative humidity
+is a fraction (0-1).
 
 The grid is described with CF metadata as in the DINI zarrs: x/y in
 projection metres, and a `danra_projection` grid mapping variable (CF Lambert
@@ -25,9 +26,9 @@ without it they take x/y for lon/lat in degrees. NB: DANRA's own
 instead of 25), so it isn't copied.
 
 Usage:
-    python -m anna_inference.convert_output --prediction inference_output.zarr \\
+    python -m clara_inference.convert_output --prediction inference_output.zarr \\
         --danra-grid inference_artifact/grids/danra_model1_config.grid.zarr \\
-        --interior-config inference_artifact/configs/danra_model1_config.yaml \\
+        --interior-config inference_artifact/configs/danra_model1_config_ifs_finetune.yaml \\
         --analysis-time 2026-10-01T00:00 --output-dir outputs/
 """
 import argparse
@@ -78,17 +79,28 @@ NOTES = {
 GRID_MAPPING = "danra_projection"
 
 
-def projection_cf_attrs(interior_config):
+MEMBER_DIM = "ensemble_member"
+
+
+def projection_crs(interior_config):
     """
-    CF grid mapping attributes (incl. `crs_wkt`) of the projection in an mdp
-    datastore config's `extra.projection`, built as neural-lam does.
+    The cartopy projection in an mdp datastore config's `extra.projection`,
+    built as neural-lam does.
     """
     with open(interior_config) as f:
         projection = yaml.safe_load(f)["extra"]["projection"]
     kwargs = dict(projection["kwargs"])
     if "globe" in kwargs:
         kwargs["globe"] = ccrs.Globe(**kwargs["globe"])
-    crs = getattr(ccrs, projection["class_name"])(**kwargs)
+    return getattr(ccrs, projection["class_name"])(**kwargs)
+
+
+def projection_cf_attrs(interior_config):
+    """
+    CF grid mapping attributes (incl. `crs_wkt`) of the projection in an mdp
+    datastore config's `extra.projection`.
+    """
+    crs = projection_crs(interior_config)
     return {
         k: list(v) if isinstance(v, tuple) else v
         for k, v in crs.to_cf().items()
@@ -109,6 +121,13 @@ def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
     da = da.swap_dims(elapsed_forecast_duration="time").drop_vars(
         "elapsed_forecast_duration"
     )
+    # neural-lam names the ensemble dimension `member` (absent for a single
+    # deterministic forecast)
+    if "member" in da.dims:
+        da = da.rename(member=MEMBER_DIM)
+    else:
+        da = da.expand_dims(MEMBER_DIM)
+    da = da.assign_coords({MEMBER_DIM: np.arange(da[MEMBER_DIM].size)})
     features = [str(f) for f in da.state_feature.values]
 
     # with the grid's CF attrs (x/y: projection_{x,y}_coordinate in m)
@@ -119,16 +138,20 @@ def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
         lon=(("y", "x"), ds_grid.lon.values, ds_grid.lon.attrs),
     )
     attrs = dict(
-        source="ANNA forecast (DANRA ML LAM model, arXiv:2504.09340)",
+        source=(
+            "CLARA (CRPS-LAM Rapid Atmospheric ensembles) forecast, the "
+            "CRPS-LAM model of arXiv:2510.09484"
+        ),
         analysis_time=str(np.datetime64(analysis_time, "s")),
         start_time=str(ds_pred.start_time.values[0]),
+        ensemble_size=int(da[MEMBER_DIM].size),
     )
 
     def _var(feature):
         return (
             da.sel(state_feature=feature)
             .drop_vars("state_feature")
-            .transpose("time", "y", "x")
+            .transpose(MEMBER_DIM, "time", "y", "x")
         )
 
     ds_sl = xr.Dataset({v: _var(v) for v in SINGLE_LEVEL_VARS}).assign_coords(
@@ -147,7 +170,7 @@ def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
             v: xr.concat(
                 [_var(f"{v}{p}") for p in levels],
                 dim=xr.DataArray(levels, dims="pressure", name="pressure"),
-            ).transpose("time", "pressure", "y", "x")
+            ).transpose(MEMBER_DIM, "time", "pressure", "y", "x")
             for v in PRESSURE_LEVEL_VARS
         }
     ).assign_coords(**coords)
@@ -205,6 +228,12 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name, ds in [("single_levels", ds_sl), ("pressure_levels", ds_pl)]:
         fp = args.output_dir / f"{name}.zarr"
+        # one chunk per member and valid time (neural-lam's chunking of the
+        # prediction doesn't carry over to the split variables)
+        ds = ds.chunk({MEMBER_DIM: 1, "time": 1})
+        for v in ds.variables:
+            ds[v].encoding.pop("chunks", None)
+            ds[v].encoding.pop("preferred_chunks", None)
         ds.to_zarr(fp, mode="w", consolidated=True)
         logger.info(
             f"wrote {fp} ({ds.time.size} valid times {ds.time.values})"

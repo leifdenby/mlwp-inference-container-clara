@@ -1,5 +1,5 @@
 """
-Tests for `anna_inference.upload_outputs`, against fsspec's in-memory
+Tests for `clara_inference.upload_outputs`, against fsspec's in-memory
 filesystem instead of S3.
 
     uv run pytest tests
@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from anna_inference import upload_outputs as uo
+from clara_inference import upload_outputs as uo
 
 
 def _outputs(tmp_path, n_times=3, value=1.0):

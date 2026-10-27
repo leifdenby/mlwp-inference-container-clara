@@ -3,7 +3,7 @@ import argparse
 
 import pytest
 
-from anna_inference import envargs
+from clara_inference import envargs
 
 PREFIX = "MODEL"
 
@@ -25,7 +25,7 @@ def _parse(argv, environ):
 
 def test_env_var_name():
     name = envargs.env_var_name("ANNA", "--forecast-duration")
-    assert name == "ANNA_FORECAST_DURATION"
+    assert name == "CLARA_FORECAST_DURATION"
 
 
 def test_env_sets_default_and_cli_wins():

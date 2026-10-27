@@ -4,7 +4,7 @@ import urllib.error
 
 import pytest
 
-from anna_inference import fetch_checkpoint
+from clara_inference import fetch_checkpoint
 
 
 def _http_error(code):

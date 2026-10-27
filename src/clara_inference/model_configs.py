@@ -1,29 +1,29 @@
 """
-Which configs ANNA uses.
+Which configs CLARA uses.
 
-- **The trained model** (the inference artifact's `configs/`): `model.yaml`
-  names the neural-lam config the model was trained with, which names the
-  interior (DANRA) and boundary (ERA5) datastore configs. The artifact has
-  their statistics and grids.
-- **Operational boundaries** (this package, `anna_inference/boundary/`): the
-  boundary datastore configs for running from DINI or IFS forecasts. They are
-  not part of the model. The neural-lam config for a forecast is derived from
-  the training one (`inference_neural_lam_config`): the same model and
-  settings, with the operational boundary normalised with the ERA5 training
-  statistics (`overload_stats_path`).
+The trained model is described by the inference artifact's `configs/`:
+`model.yaml` names the neural-lam config the model was trained with
+(`danra_model_config_ifs_all.yaml`), which names
+
+- the interior datastore config (DANRA, `danra_model1_config_ifs_finetune`)
+  and the config of the datastore its statistics come from
+  (`danra_model1_config`, via `overload_stats_path`)
+- the boundary datastore config (IFS forecasts,
+  `overlapping_ifs_all2_400km_model1_config`) and the config of the datastore
+  its statistics come from (ERA5, `overlapping_era_400km_model1_config`)
+
+Unlike ANNA, the operational boundary (IFS forecasts) is what CLARA was
+fine-tuned on, so the training boundary datastore config is used as is (with
+its input paths replaced). The statistics datastores are shipped in the
+artifact as `configs/<name>.zarr` next to their configs, holding only the
+training statistics and splits, which is all neural-lam reads for
+`overload_stats_path`.
 """
 import copy
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 
 import yaml
-
-# operational boundary sources and their datastore configs (package data)
-BOUNDARY_SOURCES = {
-    "dini": "dini_7deg_model1_config.yaml",
-    "ifs": "ifs_7deg_model1_config.yaml",
-}
 
 
 @dataclass
@@ -32,12 +32,18 @@ class TrainingConfigs:
 
     neural_lam_config: str
     interior_datastore: str
+    interior_stats_datastore: str
     boundary_datastore: str
+    boundary_stats_datastore: str
 
     @staticmethod
     def name(fn):
         """Datastore name: the config file name without `.yaml`."""
         return Path(fn).stem
+
+    @property
+    def stats_datastores(self):
+        return [self.interior_stats_datastore, self.boundary_stats_datastore]
 
 
 def training_configs(configs_dir):
@@ -46,41 +52,36 @@ def training_configs(configs_dir):
     model = yaml.safe_load((configs_dir / "model.yaml").read_text())
     fn_nl_config = model["neural_lam_config"]
     nl_config = yaml.safe_load((configs_dir / fn_nl_config).read_text())
+    interior = nl_config["datastore"]
+    boundary = nl_config["datastore_boundary"]
     return TrainingConfigs(
         neural_lam_config=fn_nl_config,
-        interior_datastore=nl_config["datastore"]["config_path"],
-        boundary_datastore=nl_config["datastore_boundary"]["config_path"],
+        interior_datastore=interior["config_path"],
+        interior_stats_datastore=interior["overload_stats_path"],
+        boundary_datastore=boundary["config_path"],
+        boundary_stats_datastore=boundary["overload_stats_path"],
     )
-
-
-def boundary_config_path(boundary_source):
-    """The (packaged) boundary datastore config of an operational source."""
-    if boundary_source not in BOUNDARY_SOURCES:
-        raise KeyError(
-            f"unknown boundary source {boundary_source!r} "
-            f"(have {sorted(BOUNDARY_SOURCES)})"
-        )
-    fp = (
-        resources.files("anna_inference")
-        / "boundary"
-        / BOUNDARY_SOURCES[boundary_source]
-    )
-    return Path(str(fp))
 
 
 def inference_neural_lam_config(
-    training_nl_config, interior_config, boundary_config, stats_config
+    training_nl_config,
+    interior_config,
+    boundary_config,
+    interior_stats_config,
+    boundary_stats_config,
 ):
     """
     The neural-lam config for a forecast: the training config (a dict) with
-    the inference interior datastore, the operational boundary datastore, and
-    the boundary normalised with the training boundary statistics
-    (`overload_stats_path`, the training boundary datastore config next to
-    its stats datastore zarr).
+    the inference interior and boundary datastores, normalised with the
+    training statistics (`overload_stats_path`: the stats datastore configs
+    in the artifact, next to their stats-only zarrs). neural-lam joins the
+    paths onto the config's directory, so the stats configs are given as
+    absolute paths.
     """
     nl_config = copy.deepcopy(training_nl_config)
     nl_config["datastore"]["config_path"] = str(interior_config)
+    nl_config["datastore"]["overload_stats_path"] = str(interior_stats_config)
     boundary = nl_config["datastore_boundary"]
     boundary["config_path"] = str(boundary_config)
-    boundary["overload_stats_path"] = str(stats_config)
+    boundary["overload_stats_path"] = str(boundary_stats_config)
     return nl_config

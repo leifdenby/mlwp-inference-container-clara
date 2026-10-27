@@ -3,17 +3,25 @@ Download the model checkpoint described in an inference artifact's
 `configs/model.yaml` into the artifact directory, and check its md5.
 
 Does nothing if the checkpoint is already there with the right md5. If the
-download fails (e.g. Zenodo is down), the mirrors are tried in order.
+download fails, the mirrors are tried in order.
+
+The checkpoint of CLARA is a release asset of the private GitHub repository,
+so downloads from GitHub use the token in the GITHUB_TOKEN environment
+variable (in the container build: the `github_token` build secret). Private
+release assets are downloaded through the API, from
+`https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`.
 
 Usage:
-    python -m anna_inference.fetch_checkpoint <artifact_dir> \
+    python -m clara_inference.fetch_checkpoint <artifact_dir> \
         [--mirror-url <url>]...
 """
 import argparse
 import hashlib
 import http.client
+import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -29,15 +37,47 @@ def _md5(fp):
     return md5.hexdigest()
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """
+    Don't forward the GitHub token to another host: GitHub redirects asset
+    downloads to signed storage URLs, which reject an Authorization header.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (
+            urllib.parse.urlparse(newurl).hostname
+            != urllib.parse.urlparse(req.full_url).hostname
+        ):
+            new.remove_header("Authorization")
+        return new
+
+
+_opener = urllib.request.build_opener(_DropAuthOnRedirect)
+
+
+def _request(url):
+    """The request for `url`, authenticated for GitHub with GITHUB_TOKEN."""
+    headers = {}
+    host = urllib.parse.urlparse(url).hostname or ""
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and (host == "github.com" or host.endswith(".github.com")):
+        headers["Authorization"] = f"Bearer {token}"
+        if host == "api.github.com":
+            # a release asset's content (not its JSON description)
+            headers["Accept"] = "application/octet-stream"
+    return urllib.request.Request(url, headers=headers)
+
+
 def _download(url, fp, attempts=3, wait=10, timeout=60):
     """
     Download `url` to `fp`, retrying (with a growing wait) on network
-    errors and server errors (e.g. a Zenodo 504), but not client errors
+    errors and server errors (e.g. a 504), but not client errors
     """
     for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(
-                url, timeout=timeout
+            with _opener.open(
+                _request(url), timeout=timeout
             ) as response, open(fp, "wb") as fh:
                 for chunk in iter(lambda: response.read(2**20), b""):
                     fh.write(chunk)

@@ -10,7 +10,7 @@ from S3 and checked against the local ones.
 Credentials as for reading DINI (e.g. AWS_PROFILE).
 
 Usage:
-    python -m anna_inference.upload_outputs \\
+    python -m clara_inference.upload_outputs \\
         --outputs inference_workdir/outputs \\
         --analysis-time 2026-10-01T00:00 --prefix s3://anna-forecasts/
 """

@@ -2,7 +2,7 @@
 import importlib.metadata
 
 try:
-    __version__ = importlib.metadata.version("anna-inference")
+    __version__ = importlib.metadata.version("clara-inference")
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 

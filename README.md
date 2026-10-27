@@ -5,8 +5,11 @@
 > describe the intended design and are marked *(planned)* where nothing is
 > implemented yet.
 
-This repository builds the inference container images for **CLARA**. CLARA
-runs **CRPS-LAM** operationally. CRPS-LAM is the probabilistic
+This repository builds the inference container images for **CLARA**,
+**C**RPS-**LA**M **R**apid **A**tmospheric ensembles. CLARA runs **CRPS-LAM**
+operationally. "Rapid" refers to the model's main strength: each ensemble
+member is generated in a single forward pass, about 39× faster than diffusion
+baselines. CRPS-LAM is the probabilistic
 machine-learning limited-area model of Larsson et al. (2025),
 ["CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous Ranked
 Probability Score"](https://arxiv.org/abs/2510.09484).

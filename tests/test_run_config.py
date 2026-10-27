@@ -1,11 +1,11 @@
-"""The configuration of the entrypoint (anna_inference.run)."""
+"""The configuration of the entrypoint (clara_inference.run)."""
 import datetime
 import re
 from pathlib import Path
 
 import pytest
 
-from anna_inference import envargs, run
+from clara_inference import envargs, run
 
 README = Path(__file__).parents[1] / "README.md"
 
@@ -20,7 +20,7 @@ def artifact(tmp_path):
 def test_readme_option_table_matches_the_parser():
     """The README's table lists every option, with its env var name."""
     rows = re.findall(
-        r"^\| `(--[a-z0-9-]+)[^`]*` \| `(ANNA_[A-Z0-9_]+)` \|",
+        r"^\| `(--[a-z0-9-]+)[^`]*` \| `(CLARA_[A-Z0-9_]+)` \|",
         README.read_text(),
         flags=re.MULTILINE,
     )
@@ -34,10 +34,10 @@ def test_readme_option_table_matches_the_parser():
 
 def test_config_from_env(artifact, tmp_path):
     environ = {
-        "ANNA_ANALYSIS_TIME": "2026-10-01T06:00+02:00",
-        "ANNA_FORECAST_DURATION": "PT30H",
-        "ANNA_ARTIFACT_PATH": str(artifact),
-        "ANNA_WORKDIR": str(tmp_path / "work"),
+        "CLARA_ANALYSIS_TIME": "2026-10-01T06:00+02:00",
+        "CLARA_FORECAST_DURATION": "PT30H",
+        "CLARA_ARTIFACT_PATH": str(artifact),
+        "CLARA_WORKDIR": str(tmp_path / "work"),
     }
     _, args, sources = run.parse_config([], environ)
     assert args.analysis_time == datetime.datetime(2026, 10, 1, 4)
@@ -53,8 +53,8 @@ def test_config_from_env(artifact, tmp_path):
 def test_invalid_forecast_duration(artifact, duration):
     argv = ["--analysis-time", "2026-10-01T00:00"]
     environ = {
-        "ANNA_FORECAST_DURATION": duration,
-        "ANNA_ARTIFACT_PATH": str(artifact),
+        "CLARA_FORECAST_DURATION": duration,
+        "CLARA_ARTIFACT_PATH": str(artifact),
     }
     with pytest.raises(SystemExit) as ex:
         run.parse_config(argv, environ)
@@ -75,7 +75,7 @@ def test_ifs_needs_a_boundary_path(artifact):
 def test_missing_artifact(tmp_path):
     argv = ["--analysis-time", "2026-10-01T00:00"]
     with pytest.raises(SystemExit) as ex:
-        run.parse_config(argv, {"ANNA_ARTIFACT_PATH": str(tmp_path)})
+        run.parse_config(argv, {"CLARA_ARTIFACT_PATH": str(tmp_path)})
     assert ex.value.code == 2
 
 
@@ -90,7 +90,7 @@ def _forecast(artifact, monkeypatch, environ):
     for name, value in AMBIENT.items():
         monkeypatch.setenv(name, value)
     argv = ["--analysis-time", "2026-10-01T00:00"]
-    environ = {"ANNA_ARTIFACT_PATH": str(artifact), **environ}
+    environ = {"CLARA_ARTIFACT_PATH": str(artifact), **environ}
     _, args, _ = run.parse_config(argv, environ)
     return run.Forecast(args)
 
@@ -100,9 +100,9 @@ def test_step_env_per_side(artifact, monkeypatch):
         artifact,
         monkeypatch,
         {
-            "ANNA_INPUT_S3_ENDPOINT_URL": "https://in.example",
-            "ANNA_OUTPUT_AWS_PROFILE": "writer",
-            "ANNA_OUTPUT_S3_PREFIX": "s3://bucket/",
+            "CLARA_INPUT_S3_ENDPOINT_URL": "https://in.example",
+            "CLARA_OUTPUT_AWS_PROFILE": "writer",
+            "CLARA_OUTPUT_S3_PREFIX": "s3://bucket/",
         },
     )
     env_in = forecast.step_env("input")
@@ -126,11 +126,11 @@ def test_step_env_unchanged_without_options(artifact, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "name", ["ANNA_OUTPUT_S3_ENDPOINT_URL", "ANNA_OUTPUT_AWS_PROFILE"]
+    "name", ["CLARA_OUTPUT_S3_ENDPOINT_URL", "CLARA_OUTPUT_AWS_PROFILE"]
 )
 def test_output_options_need_a_prefix(artifact, name):
     argv = ["--analysis-time", "2026-10-01T00:00"]
-    environ = {"ANNA_ARTIFACT_PATH": str(artifact), name: "x"}
+    environ = {"CLARA_ARTIFACT_PATH": str(artifact), name: "x"}
     with pytest.raises(SystemExit) as ex:
         run.parse_config(argv, environ)
     assert ex.value.code == 2

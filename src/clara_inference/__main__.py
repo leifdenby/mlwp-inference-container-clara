@@ -1,3 +1,3 @@
-from anna_inference.run import main
+from clara_inference.run import main
 
 main()

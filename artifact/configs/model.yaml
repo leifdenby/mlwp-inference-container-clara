@@ -1,0 +1,91 @@
+# The model CLARA (CRPS-LAM Rapid Atmospheric ensembles) runs: CRPS-LAM from
+# "CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous
+# Ranked Probability Score" (Larsson, Oskarsson, Landelius, Lindsten 2025,
+# arXiv:2510.09484), fine-tuned with an IFS forecast boundary.
+#
+# Part of the inference artifact, which describes the model as trained. Read
+# by clara_inference.run (train_model arguments, graph, checkpoint), the
+# Containerfile and clara_inference.fetch_checkpoint.
+
+checkpoint:
+  # sanitized (clara_inference.artifact.sanitize_checkpoint) from
+  # CRPS_IFS_ALL_FINETUNE_AR12-train-crps-4x330-05_21_13-3613/last.ckpt:
+  # weights, args and config only. A release asset of the (private) GitHub
+  # repository, downloaded through the API with a GitHub token. `url` and
+  # `md5` are filled in by clara_inference.artifact.assemble
+  url: null
+  md5: null
+  # where the checkpoint is put in the inference artifact directory
+  artifact_path: clara_model.ckpt
+
+training:
+  wandb_project: real_prob_lam
+  wandb_run_name: CRPS_IFS_ALL_FINETUNE_AR12
+  run_name: CRPS_IFS_ALL_FINETUNE_AR12-train-crps-4x330-05_21_13-3613
+  finetuned_from: CRPS_IFS_ALL_FINETUNE-train-crps-4x330-05_20_08-5709
+  epoch: 92
+  global_step: 285217
+  pytorch_lightning: 2.5.1.post0
+  code: https://github.com/leifdenby/real-prob-lam (neural-lam-dev-building-ml-lams)
+  # training data: DANRA interior (2016-01-01 .. 2019-10-22 for statistics
+  # and training), IFS forecast boundary (00/12 UTC cycles, 6-hourly lead
+  # times), normalised with ERA5 statistics
+
+# The neural-lam config the model was trained with. It names the interior
+# and boundary datastore configs and their statistics datastores
+# (`overload_stats_path`), all in this directory.
+neural_lam_config: danra_model_config_ifs_all.yaml
+# the interior datastore config (also in the neural-lam config), whose grid
+# and projection the outputs are on
+interior_datastore: danra_model1_config_ifs_finetune.yaml
+
+graph:
+  # the graph the model was trained with, shipped prebuilt in graphs/ (a
+  # feature-map mesh of 198 x 148 nodes over the interior; boundary nodes
+  # connected to the mesh). Its boundary nodes are in training order, which
+  # the boundary datastore is checked against
+  name: feature_map_graph_198x148
+
+# neural_lam.train_model arguments describing the model, as in training
+# (all checkpoint arguments that affect the model and differ from
+# train_model's defaults, plus the forcing/boundary windows)
+train_model_args:
+  - --model
+  - crps
+  - --backbone_model
+  - graph_unet2
+  - --hidden_dim
+  - "330"
+  - --hidden_dim_grid
+  - "270"
+  - --hidden_dim_mesh_nodes
+  - "270"
+  - --hidden_dim_edge
+  - "32"
+  - --channel_mult
+  - "1"
+  - "1"
+  - "1"
+  - "1"
+  - "1"
+  - "1"
+  - --attn_res
+  - "10"
+  - "18"
+  - "36"
+  - "70"
+  - --noise_dim
+  - "32"
+  - --noise_embedding
+  - linear
+  - --pred_residual
+  - --precision
+  - bf16-mixed
+  - --num_past_forcing_steps
+  - "1"
+  - --num_future_forcing_steps
+  - "1"
+  - --num_past_boundary_steps
+  - "1"
+  - --num_future_boundary_steps
+  - "1"

@@ -11,7 +11,7 @@ ENV PATH="/root/.local/bin:$PATH"
 
 # the package version: the build context has no .git, so setuptools-scm
 # can't find the tag (build_image.sh and CI pass it). NB: build args are
-# environment variables in RUN steps, so none may start with ANNA_ (the
+# environment variables in RUN steps, so none may start with CLARA_ (the
 # forecast's options, see the --help check below)
 ARG IMAGE_VERSION="0.0.0+unknown"
 LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
@@ -22,11 +22,11 @@ COPY src/ ./src
 # export current torch version to constraints file
 RUN python -c 'import torch; print(f"torch=={torch.__version__}")' > constraints.txt
 # install with constraints
-RUN SETUPTOOLS_SCM_PRETEND_VERSION_FOR_ANNA_INFERENCE="${IMAGE_VERSION}" \
+RUN SETUPTOOLS_SCM_PRETEND_VERSION_FOR_CLARA_INFERENCE="${IMAGE_VERSION}" \
     uv pip install --break-system-packages --system --constraints constraints.txt .
 # check that neural-lam imports (with the base image's torch), and show the
 # versions (neural-lam-dev has no __version__)
-RUN python -c 'import importlib.metadata as md, anna_inference, neural_lam, torch; print("anna-inference", anna_inference.__version__, "neural-lam", md.version("neural-lam"), "torch", torch.__version__)'
+RUN python -c 'import importlib.metadata as md, clara_inference, neural_lam, torch; print("clara-inference", clara_inference.__version__, "neural-lam", md.version("neural-lam"), "torch", torch.__version__)'
 
 ENV CARTOPY_DATA_DIR=/usr/local/share/cartopy
 RUN python -c 'import cartopy, cartopy.io.shapereader as shp; \
@@ -48,8 +48,8 @@ RUN python -c 'import cartopy, cartopy.io.shapereader as shp; \
 ARG ARTIFACT_SOURCE="zenodo"
 ARG PACKAGE_URL="https://zenodo.org/records/23293148/files/anna-danra-2026-10-11.zip?download=1"
 ARG PACKAGE_MD5="d453733a56c381d63922806cd4b25472"
-ARG PACKAGE_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-anna/releases/download/artifact-anna-danra-2026-10-11/anna-danra-2026-10-11.zip"
-ARG CHECKPOINT_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-anna/releases/download/artifact-anna-danra-2026-10-11/danra_model.ckpt"
+ARG PACKAGE_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-clara/releases/download/artifact-anna-danra-2026-10-11/anna-danra-2026-10-11.zip"
+ARG CHECKPOINT_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-clara/releases/download/artifact-anna-danra-2026-10-11/danra_model.ckpt"
 ARG LOCAL_ARTIFACT_DIR="artifact/build/.empty"
 # ${LOCAL_ARTIFACT_DIR} must exist in the build context: build_image.sh
 # creates an empty one for ARTIFACT_SOURCE=zenodo (so no local package ends
@@ -76,13 +76,13 @@ RUN if [ "$ARTIFACT_SOURCE" = "local" ] ; then \
     else \
         echo "unknown ARTIFACT_SOURCE=$ARTIFACT_SOURCE (local or zenodo)" && exit 1 ; \
     fi
-RUN python -m anna_inference.fetch_checkpoint /workspace/inference_artifact \
+RUN python -m clara_inference.fetch_checkpoint /workspace/inference_artifact \
         ${CHECKPOINT_MIRROR_URL:+--mirror-url "$CHECKPOINT_MIRROR_URL"}
 # List files in the inference artifact directory for verification
 RUN ls -la /workspace/inference_artifact
 
-# The forecast pipeline (see README.md): configured with ANNA_* environment
+# The forecast pipeline (see README.md): configured with CLARA_* environment
 # variables, or with options as arguments after the image name
-RUN python -m anna_inference --help > /dev/null
-ENTRYPOINT ["python", "-m", "anna_inference"]
+RUN python -m clara_inference --help > /dev/null
+ENTRYPOINT ["python", "-m", "clara_inference"]
 CMD []

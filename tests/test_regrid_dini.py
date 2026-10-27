@@ -1,5 +1,5 @@
 """
-Tests for the numerics and physics in `anna_inference.regrid_dini`.
+Tests for the numerics and physics in `clara_inference.regrid_dini`.
 
     uv run pytest tests
 """
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from anna_inference import regrid_dini as rd
+from clara_inference import regrid_dini as rd
 
 
 def test_wind_rotation_round_trip():

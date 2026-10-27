@@ -1,31 +1,32 @@
 [project]
-name = "anna-inference"
+name = "clara-inference"
 dynamic = ["version"]
-description = "Inference for ANNA, the DANRA ML limited-area weather model (arXiv:2504.09340), run from DINI forecasts, and the container image that runs it"
+description = "Inference for CLARA (CRPS-LAM Rapid Atmospheric ensembles), the CRPS-LAM probabilistic ML limited-area weather model (arXiv:2510.09484), run from DINI and IFS forecasts, and the container image that runs it"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
     {name = "Leif Denby", email = "lcd@dmi.dk"},
-    {name = "Kasper Hintz", email = "kah@dmi.dk"},
 ]
 dependencies = [
     "parse>=1.20.2",
-    # neural-lam-dev pins dask~=2025.3.0 (and xarray~=2025.3.1, numpy<2) to
-    # match the environment the DANRA model was trained with
+    # neural-lam pins dask~=2025.3.0 (and xarray~=2025.3.1, numpy<2) to
+    # match the environment CLARA was trained with
     "dask>=2025.3.0",
     "dotenv>=0.9.9",
     "ipdb>=0.13.13",
     "s3fs>=2025.3.2",
+    # reading WeatherBench2 ERA5 (artifact building)
+    "gcsfs",
     "tqdm>=4.67.1",
     "universal-pathlib>=0.2.6",
-    # zarr v2 as used for training (2.18.3): neural-lam-dev writes eval output
-    # with a zarr v2 style numcodecs compressor, which zarr v3 rejects
+    # zarr v2 as used for training: neural-lam writes eval output with a
+    # zarr v2 style numcodecs compressor, which zarr v3 rejects
     "zarr>=2.18,<3",
     "ipython>=8.37.0",
     "mllam-data-prep",
     "neural-lam",
-    # used directly; versions as resolved for neural-lam-dev / mllam-data-prep
+    # used directly; versions as resolved for neural-lam / mllam-data-prep
     "cartopy",
     "isodate",
     "loguru",
@@ -34,32 +35,31 @@ dependencies = [
     "pyyaml",
     "requests",
     "scipy",
-    "torch",
+    # as in real-prob-lam's `gpu` extra (2.12, the series CLARA's inference
+    # was tested with); the container image uses its base image's torch
+    "torch>=2.10,<2.13",
     "xarray",
 ]
 
 [project.scripts]
-anna-inference = "anna_inference.run:main"
+clara-inference = "clara_inference.run:main"
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.3.5",
+    "matplotlib",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-# the operational (DINI/IFS) boundary datastore configs
-anna_inference = ["boundary/*.yaml"]
 
 [tool.setuptools_scm]
 # the version comes from the git tag (vX.Y.Z); a build without git (the
 # container build gets it as IMAGE_VERSION, see the Containerfile) falls
 # back to this
 fallback_version = "0.0.0+unknown"
-# only `v*` tags are versions (e.g. not the artifact-* mirror release tags)
+# only `v*` tags are versions (e.g. not artifact-* release tags)
 tag_regex = "^v(?P<version>\\d+(?:\\.\\d+)*.*)$"
 
 [tool.setuptools_scm.scm.git]
@@ -69,7 +69,7 @@ describe_command = "git describe --dirty --tags --long --abbrev=40 --match v[0-9
 profile = "black"
 # as black in .pre-commit-config.yaml (the black profile assumes 88)
 line_length = 79
-known_first_party = ["anna_inference"]
+known_first_party = ["clara_inference"]
 
 [tool.uv]
 # rebuild the (editable) install when the commit or tags change, so the
@@ -78,23 +78,29 @@ cache-keys = [
     { file = "pyproject.toml" },
     { git = { commit = true, tags = true } },
 ]
-# Use exactly the mllam-data-prep ANNA was trained with:
-# sadamov/mllam-data-prep@building-ml-lams (mdp 0.5.0 based, adds domain
-# cropping and `lead_time` for derived variables). neural-lam-dev depends on the
-# branch by URL, this pins it to a commit. NB: mllam-data-prep >= 0.7 is not
-# compatible with neural-lam-dev for boundaries on regular lat/lon grids
-# (latitude/longitude are not kept as per-grid_index coordinates)
+# Use exactly the mllam-data-prep CLARA was trained with (as locked in
+# real-prob-lam): Erik-Wikingsson/mllam-data-prep-real@rect-boundary (mdp
+# 0.5.0 based, adds rectangular domain cropping in projection space and
+# `lead_time` for derived variables). neural-lam depends on the package by
+# name only, this pins it to a commit
 override-dependencies = [
-    "mllam-data-prep[latlon-domain-crop] @ git+https://github.com/sadamov/mllam-data-prep.git@dd9af481de64cbb18de269ca69a2e773027bd12d",
+    "mllam-data-prep[latlon-domain-crop] @ git+https://github.com/Erik-Wikingsson/mllam-data-prep-real@0589539bdedf942ce66399b418d2f997e3bf4cab",
 ]
 
+[[tool.uv.index]]
+# CUDA 13.0 torch builds (x86_64 and aarch64, e.g. the DGX Spark's GB10).
+# The container image uses its base image's torch instead (see Containerfile)
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
 [tool.uv.sources]
-# ANNA (gefion-1) was trained with neural-lam-dev@e58e334c (research branch).
-# a44d432e (research, 2025-08-22) also includes forecast-format boundary
-# forcing and the dependency versions matching the DANRA checkpoint. Later
-# research commits add git submodule entries without a .gitmodules url, which
-# breaks installing from git (and only change plotting code in neural_lam/)
-neural-lam = { git = "https://github.com/joeloskarsson/neural-lam-dev", rev = "a44d432e" }
+# CLARA's training code: neural-lam in leifdenby/real-prob-lam (private; git
+# authenticates with the developer's credentials, the container build with a
+# token build secret), branch prob-model-inference: bf16/single-GPU inference
+# fixes and NEURAL_LAM_STRICT_LOAD
+neural-lam = { git = "https://github.com/leifdenby/real-prob-lam", rev = "47cc2fee58c6bab92209d9945c8bb816f531c40d", subdirectory = "neural-lam-dev-building-ml-lams" }
+torch = { index = "pytorch-cu130" }
 
 [build-system]
 requires = ["setuptools>=77", "setuptools-scm>=9"]

@@ -1,22 +1,23 @@
 """
-Run an ANNA forecast (the DANRA ML LAM model of arXiv:2504.09340, see the
-artifact's configs/model.yaml) from a DINI control forecast.
+Run a CLARA ensemble forecast (CRPS-LAM Rapid Atmospheric ensembles: the
+CRPS-LAM model of arXiv:2510.09484, see the artifact's configs/model.yaml)
+from a DINI control forecast (interior) and an IFS forecast (boundary).
 
-This is the container's entrypoint (`python -m anna_inference`), where the
-inference artifact (see artifact/README.md) is in ./inference_artifact. It
-can also be run outside the container in the uv environment of this
-repository, with `--artifact-path artifact/build/<artifact-name>`.
+This is the container's entrypoint (`python -m clara_inference`), where the
+inference artifact is in ./inference_artifact. It can also be run outside
+the container in the uv environment of this repository, with
+`--artifact-path artifact/build/<artifact-name>`.
 
-Steps (see HISTORY.md), each run as a subprocess:
-  1. regrid DINI to the DANRA grid (interior) and, for the DINI boundary,
-     to the 0.25 deg ERA5 boundary box     (anna_inference.regrid_dini)
-  2. create the inference datastores and neural-lam config
-                                   (anna_inference.create_inference_dataset)
-  3. build the model's graph               (neural_lam.build_rectangular_graph)
-  4. run the forecast                      (neural_lam.train_model --eval)
-  5. convert the prediction to DANRA-like single/pressure level zarr datasets
-                                           (anna_inference.convert_output)
-  6. optionally, upload the outputs to S3  (anna_inference.upload_outputs)
+Steps, each run as a subprocess:
+  1. regrid DINI to the DANRA grid every 3 h (clara_inference.regrid_dini)
+  2. create the inference datastores (interior, and the IFS boundary in
+     training point order) and the neural-lam config, and link the graph
+                                   (clara_inference.create_inference_dataset)
+  3. run the ensemble forecast            (neural_lam.train_model --eval)
+  4. convert the prediction to DANRA-like single/pressure level zarr
+     datasets with an ensemble_member dimension
+                                          (clara_inference.convert_output)
+  5. optionally, upload the outputs to S3 (clara_inference.upload_outputs)
 
 Outputs: {workdir}/outputs/{single_levels,pressure_levels}.zarr
 
@@ -36,12 +37,12 @@ import isodate
 import yaml
 from loguru import logger
 
-import anna_inference
-from anna_inference import envargs
+import clara_inference
+from clara_inference import envargs
 
-ENV_PREFIX = "ANNA"
+ENV_PREFIX = "CLARA"
 DEFAULT_DINI_ROOT = "s3://harmonie-zarr/dini/control/{analysis}/"
-BOUNDARY_SOURCES = ["dini", "ifs"]
+DEFAULT_ENSEMBLE_SIZE = 5
 AWS_ENV_CREDENTIALS = [
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -87,9 +88,19 @@ def parse_forecast_duration(s):
     return duration
 
 
+def parse_ensemble_size(s):
+    try:
+        n = int(s)
+    except ValueError as ex:
+        raise argparse.ArgumentTypeError(str(ex))
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {s}")
+    return n
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="anna-inference",
+        prog="clara-inference",
         description=__doc__.split("\n\n")[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -97,8 +108,8 @@ def build_parser():
         "--analysis-time",
         required=True,
         type=parse_analysis_time,
-        help="DINI analysis time, ISO8601, e.g. 2026-10-01T00:00Z (UTC if "
-        "no timezone); 00/06/12/18 UTC with the DINI boundary",
+        help="DINI analysis time, ISO8601, e.g. 2026-10-01T06:00Z (UTC if "
+        "no timezone)",
     )
     parser.add_argument(
         "--forecast-duration",
@@ -106,21 +117,24 @@ def build_parser():
         default="PT18H",
         help="ISO8601 duration, a multiple of 3h, from PT12H (neural-lam "
         "needs that to load the model) to the DINI forecast length - 6h "
-        "(PT30H for a 36h DINI run) (default: %(default)s)",
+        "(default: %(default)s)",
     )
     parser.add_argument(
-        "--boundary-source",
-        choices=BOUNDARY_SOURCES,
-        default="dini",
-        help="(default: %(default)s)",
+        "--ensemble-size",
+        type=parse_ensemble_size,
+        default=DEFAULT_ENSEMBLE_SIZE,
+        help="number of ensemble members (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--ifs-boundary-path",
+        required=True,
+        help="IFS forecast zarr (local or S3) following the contract in "
+        "clara_inference/ifs_boundary.py; the latest 00/12 UTC cycle at or "
+        "before analysis time - 3h is used",
     )
     parser.add_argument(
         "--dini-root",
         help=f"DINI forecast zarr root (default: {DEFAULT_DINI_ROOT})",
-    )
-    parser.add_argument(
-        "--ifs-boundary-path",
-        help="IFS forecast zarr, required for --boundary-source ifs",
     )
     parser.add_argument(
         "--workdir",
@@ -139,15 +153,15 @@ def build_parser():
     parser.add_argument(
         "--skip-completed",
         action="store_true",
-        help="skip the regridding, datastore and graph steps already "
-        "completed in the workdir (marked by a .completed file), e.g. to "
-        "rerun only the forecast. Only use with the same analysis time, "
-        "forecast duration and boundary source as the completed run",
+        help="skip the regridding and datastore steps already completed in "
+        "the workdir (marked by a .completed file), e.g. to rerun only the "
+        "forecast. Only use with the same analysis time, forecast duration "
+        "and IFS boundary as the completed run",
     )
     parser.add_argument(
         "--output-s3-prefix",
         help="also upload the outputs to {prefix}/{analysis time}/ (e.g. "
-        "s3://anna-forecasts/2026-10-01T000000Z/), replacing an earlier "
+        "s3://clara-forecasts/2026-10-01T060000Z/), replacing an earlier "
         "upload for that analysis time",
     )
     # S3 endpoint and credentials per side (input: DINI and IFS; output: the
@@ -186,8 +200,6 @@ def parse_config(argv=None, environ=None):
     """The parsed and checked configuration, and each value's source."""
     parser = build_parser()
     args, sources = envargs.parse_args(parser, ENV_PREFIX, argv, environ)
-    if args.boundary_source == "ifs" and not args.ifs_boundary_path:
-        parser.error("--boundary-source ifs needs --ifs-boundary-path")
     if not args.output_s3_prefix and (
         args.output_s3_endpoint_url or args.output_aws_profile
     ):
@@ -218,16 +230,17 @@ class Forecast:
         self.analysis_iso = f"{args.analysis_time:%Y-%m-%dT%H:%M}"
         self.duration_iso = isodate.duration_isoformat(args.forecast_duration)
         self.ar_steps = int(args.forecast_duration / INTERIOR_STEP) - 1
-        self.danra_grid = (
-            self.artifact / "grids" / "danra_model1_config.grid.zarr"
-        )
         self.model = yaml.safe_load(
             (self.artifact / "configs" / "model.yaml").read_text()
         )
+        self.interior_name = Path(self.model["interior_datastore"]).stem
+        self.danra_grid = (
+            self.artifact / "grids" / f"{self.interior_name}.grid.zarr"
+        )
         self.env = dict(os.environ)
         if args.debugger:
-            # read by the anna_inference steps
-            self.env["ANNA_DEBUGGER"] = args.debugger
+            # read by the clara_inference steps
+            self.env["CLARA_DEBUGGER"] = args.debugger
 
     def step_env(self, side):
         """
@@ -276,15 +289,16 @@ class Forecast:
     def mark_completed(self, path):
         (path / ".completed").write_text(
             f"{self.analysis_iso} {self.duration_iso} "
-            f"{self.args.boundary_source}\n"
+            f"{self.args.ifs_boundary_path}\n"
         )
 
     def checkpoint(self):
         checkpoint = self.artifact / self.model["checkpoint"]["artifact_path"]
         if not checkpoint.is_file():
             raise StepFailed(
-                f"model checkpoint {checkpoint} not found, download it from "
-                f"{self.model['checkpoint']['url']}"
+                f"model checkpoint {checkpoint} not found, download it with "
+                "`python -m clara_inference.fetch_checkpoint "
+                f"{self.artifact}`"
             )
         return checkpoint
 
@@ -293,23 +307,24 @@ class Forecast:
         if self.completed(inputs, "the regridding"):
             return
         (inputs / ".completed").unlink(missing_ok=True)
-        cmd = [
-            sys.executable,
-            "-m",
-            "anna_inference.regrid_dini",
-            "regrid",
-            "--dini-root",
-            self.args.dini_root,
-            "--danra-grid",
-            self.danra_grid,
-            "--forecast-duration",
-            self.duration_iso,
-            "--output",
-            inputs,
-        ]
-        if self.args.boundary_source == "ifs":
-            cmd.append("--no-boundary")
-        self.run_step("1. regrid DINI", cmd, env=self.step_env("input"))
+        self.run_step(
+            "1. regrid DINI",
+            [
+                sys.executable,
+                "-m",
+                "clara_inference.regrid_dini",
+                "regrid",
+                "--dini-root",
+                self.args.dini_root,
+                "--danra-grid",
+                self.danra_grid,
+                "--forecast-duration",
+                self.duration_iso,
+                "--output",
+                inputs,
+            ],
+            env=self.step_env("input"),
+        )
         self.mark_completed(inputs)
 
     def create_datastores(self):
@@ -317,24 +332,18 @@ class Forecast:
         if self.completed(datastores, "the inference datastores"):
             return
         (datastores / ".completed").unlink(missing_ok=True)
-        if self.args.boundary_source == "dini":
-            boundary = self.workdir / "inputs" / "boundary.zarr"
-        else:
-            boundary = self.args.ifs_boundary_path
         self.run_step(
             "2. inference datastores",
             [
                 sys.executable,
                 "-m",
-                "anna_inference.create_inference_dataset",
+                "clara_inference.create_inference_dataset",
                 "--artifact",
                 self.artifact,
                 "--interior-dir",
                 self.workdir / "inputs",
-                "--boundary",
-                boundary,
-                "--boundary-source",
-                self.args.boundary_source,
+                "--ifs-boundary",
+                self.args.ifs_boundary_path,
                 "--analysis-time",
                 self.analysis_iso,
                 "--forecast-duration",
@@ -351,30 +360,13 @@ class Forecast:
     def nl_config(self):
         return self.workdir / "datastores" / "config.yaml"
 
-    def build_graph(self):
-        graph = self.model["graph"]
-        graph_dir = self.workdir / "datastores" / "graphs" / graph["name"]
-        if self.completed(graph_dir, "the graph"):
-            return
-        self.run_step(
-            "3. graph",
-            [
-                sys.executable,
-                "-m",
-                "neural_lam.build_rectangular_graph",
-                "--config_path",
-                self.nl_config,
-                "--graph_name",
-                graph["name"],
-                *map(str, graph["build_args"]),
-            ],
-        )
-        self.mark_completed(graph_dir)
-
     def forecast(self, checkpoint):
         """
-        - wandb offline (disabled crashes when saving the metric plots);
-          neural-lam writes its wandb run dir relative to the CWD
+        - strict checkpoint loading (NEURAL_LAM_STRICT_LOAD=1): neural-lam
+          would otherwise keep randomly initialised weights for missing or
+          mismatched parameters
+        - wandb offline (neural-lam always creates a wandb logger); it
+          writes its run dir relative to the CWD
         - empty --eval_init_times: no restriction to 00/12 UTC forecasts
         - neural-lam's main() only logs exceptions (exit code 0), so check
           the output
@@ -385,9 +377,14 @@ class Forecast:
         (self.workdir / "outputs").mkdir(parents=True, exist_ok=True)
         wandb_dir = self.workdir / "wandb"
         wandb_dir.mkdir(parents=True, exist_ok=True)
-        env = {**self.env, "WANDB_MODE": "offline", "WANDB_DIR": wandb_dir}
+        env = {
+            **self.env,
+            "WANDB_MODE": "offline",
+            "WANDB_DIR": wandb_dir,
+            "NEURAL_LAM_STRICT_LOAD": "1",
+        }
         self.run_step(
-            "4. forecast",
+            "3. forecast",
             [
                 sys.executable,
                 "-m",
@@ -397,6 +394,8 @@ class Forecast:
                 *map(str, self.model["train_model_args"]),
                 "--graph_name",
                 self.model["graph"]["name"],
+                "--ensemble_size",
+                self.args.ensemble_size,
                 "--eval",
                 "test",
                 "--ar_steps_eval",
@@ -409,7 +408,7 @@ class Forecast:
                 "--batch_size",
                 1,
                 "--num_workers",
-                1,
+                0,
                 "--load",
                 checkpoint,
                 "--save_eval_to_zarr_path",
@@ -427,17 +426,17 @@ class Forecast:
 
     def convert(self, prediction):
         self.run_step(
-            "5. convert outputs",
+            "4. convert outputs",
             [
                 sys.executable,
                 "-m",
-                "anna_inference.convert_output",
+                "clara_inference.convert_output",
                 "--prediction",
                 prediction,
                 "--danra-grid",
                 self.danra_grid,
                 "--interior-config",
-                self.artifact / "configs" / "danra_model1_config.yaml",
+                self.artifact / "configs" / self.model["interior_datastore"],
                 "--analysis-time",
                 self.analysis_iso,
                 "--output-dir",
@@ -447,11 +446,11 @@ class Forecast:
 
     def upload(self):
         self.run_step(
-            "6. upload outputs",
+            "5. upload outputs",
             [
                 sys.executable,
                 "-m",
-                "anna_inference.upload_outputs",
+                "clara_inference.upload_outputs",
                 "--outputs",
                 self.workdir / "outputs",
                 "--analysis-time",
@@ -465,23 +464,23 @@ class Forecast:
     def run(self):
         self.workdir.mkdir(parents=True, exist_ok=True)
         artifact_yaml = self.artifact / "artifact.yaml"
-        if artifact_yaml.exists() and "boundary_stats_placeholder: true" in (
+        if artifact_yaml.exists() and "placeholder_stats: true" in (
             artifact_yaml.read_text()
         ):
             logger.warning(
-                "the inference artifact uses PLACEHOLDER boundary statistics"
+                "the inference artifact uses PLACEHOLDER normalisation "
+                "statistics, not the training statistics: for testing only"
             )
         log_device()
         checkpoint = self.checkpoint()
         self.regrid()
         self.create_datastores()
-        self.build_graph()
         prediction = self.forecast(checkpoint)
         self.convert(prediction)
         if self.args.output_s3_prefix:
             self.upload()
         logger.info(
-            f"ANNA forecast done: {self.workdir}/outputs/"
+            f"CLARA forecast done: {self.workdir}/outputs/"
             "{single_levels,pressure_levels}.zarr"
         )
 
@@ -498,8 +497,8 @@ def log_device():
 
 
 def main(argv=None):
-    logger.info(f"Starting anna-inference {anna_inference.__version__}")
-    # a local .env file (e.g. with S3 credentials, or ANNA_* variables);
+    logger.info(f"Starting clara-inference {clara_inference.__version__}")
+    # a local .env file (e.g. with S3 credentials, or CLARA_* variables);
     # variables already set win
     if Path(".env").is_file():
         logger.info("Loading environment variables from .env")
@@ -513,7 +512,7 @@ def main(argv=None):
     forecast = Forecast(args)
     logger.info(
         f"{forecast.duration_iso} forecast from {forecast.analysis_iso} "
-        f"({forecast.ar_steps} steps)"
+        f"({forecast.ar_steps} steps, {args.ensemble_size} members)"
     )
     try:
         forecast.run()

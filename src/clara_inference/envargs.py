@@ -42,7 +42,7 @@ SOURCE_CLI, SOURCE_ENV, SOURCE_DEFAULT = "cli", "env", "default"
 
 
 def env_var_name(prefix, option):
-    """`("ANNA", "--forecast-duration")` -> `ANNA_FORECAST_DURATION`."""
+    """`("ANNA", "--forecast-duration")` -> `CLARA_FORECAST_DURATION`."""
     return f"{prefix}_{option.lstrip('-').upper().replace('-', '_')}"
 
 
