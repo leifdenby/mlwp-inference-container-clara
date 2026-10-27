@@ -84,13 +84,12 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - `persistent_workers` guard
   - fft2 CPU fallback
 - [x] Add `NEURAL_LAM_STRICT_LOAD=1`, which makes `on_load_checkpoint` raise on missing or shape-mismatched parameters.
-- [ ] Push `prob-model-inference` to `leifdenby/real-prob-lam`.
-- [?] `real-prob-lam` is **private**, so the image build can't simply `pip install git+https://…`. Options:
-  - (a) a build secret with a GitHub token
-  - (b) vendor `neural-lam-dev-building-ml-lams` as a git submodule in the build context
-  - (c) make `real-prob-lam` public
-
-  Current lean: (b), the submodule, pinned to a commit.
+- [x] Push `prob-model-inference` to `leifdenby/real-prob-lam` (pin `47cc2fe`).
+- [x] **Decided:** both repos stay private, with no submodules. The image installs neural-lam from `git+https://github.com/leifdenby/real-prob-lam@<sha>#subdirectory=neural-lam-dev-building-ml-lams`:
+  - The GitHub token is passed as a BuildKit secret (`--secret id=github_token`) and used only inside that `RUN` step, so it never ends up in an image layer.
+  - Locally, `build_image.sh` takes the token from `gh auth token`.
+  - In CI, it comes from a repo secret holding a read-only fine-grained PAT.
+  - `uv lock`/`uv sync` use the developer's own git credentials.
 
 ## Phase 1: inference artifact (`src/clara_inference/artifact/`)
 
@@ -116,6 +115,9 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - [ ] Publish the package and checkpoint as a GitHub release asset or on Zenodo.
 
 ## Phase 2: repo scaffold (copy and adapt from anna)
+
+- [x] Import the template files from anna `a7033c2` unmodified (a separate commit, for a clean diff); rename `anna_inference` → `clara_inference` and `ANNA_` → `CLARA_`.
+- [x] README with a domain plot (`dev-utils/plot_domain.py` → `docs/clara_domain.png`).
 
 - [ ] `pyproject.toml`, `Containerfile`, `scripts/build_image.sh`, `scripts/run_inference_container.sh`
 - [ ] `envargs.py` and `fetch_checkpoint.py`, unchanged

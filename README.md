@@ -87,6 +87,19 @@ Pinned in [pyproject.toml](pyproject.toml) *(planned)*:
   (`rect-boundary`, with `latlon-domain-crop`), as used for training.
 - **zarr 2**, as in training.
 
+## Domain
+
+![The CLARA domain: DANRA interior, IFS boundary points and the DINI domain](docs/clara_domain.png)
+
+- **Interior:** the full DANRA grid, 2.5 km Lambert conformal with 589 × 789
+  points. Initial states are regridded to it from DINI.
+- **Boundary:** 14,858 points of the 0.25° grid within 400 km of the
+  interior. Unlike ANNA's boundary ring, the points *inside* the interior
+  (orange) are included too. All of them come from IFS, so, unlike ANNA's DINI
+  boundary, there is no coverage gap.
+
+The figure is made with `dev-utils/plot_domain.py`.
+
 ## Configs
 
 The trained model was set up with these configs:
