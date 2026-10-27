@@ -1,14 +1,16 @@
 """
-Sanity-check an ANNA forecast written by `python -m clara_inference`: the
-valid times, that all values are finite and within physical ranges, and how
-far the forecast is from the DINI forecast it was started from (regridded
-to the DANRA grid,
+Sanity-check a CLARA ensemble forecast written by `python -m
+clara_inference`: the valid times, that all values are finite and within
+physical ranges, the ensemble spread (it must be positive and normally grows
+with lead time), and how far the ensemble mean is from the DINI forecast it
+was started from (regridded to the DANRA grid,
 `inputs/interior_*_levels.zarr` in the workdir) at the same valid times.
 
-ANNA and DINI are both forecasts, so they differ, but after a few hours the
+CLARA and DINI are both forecasts, so they differ, but after a few hours the
 differences should be of the size of typical short-range forecast
-differences (e.g. ~1-2 K in t2m, a few m/s in the winds). Much larger ones
-point at a problem with the inputs (units, wind directions, normalisation).
+differences (e.g. ~1-2 K in t2m, a few m/s in the winds), and comparable to
+the ensemble spread. Much larger ones point at a problem with the inputs
+(units, wind directions, normalisation).
 
 Usage (from the repository root):
     uv run python \\
@@ -38,10 +40,34 @@ RANGES = dict(
 )
 
 
+MEMBER = "ensemble_member"
+
+
+def _scores(da, da_dini, common):
+    """
+    Per valid time: rmse and bias of the ensemble mean against DINI, and the
+    ensemble spread (std over members, root-mean-square over the grid).
+    """
+    spatial = ["x", "y"]
+    mean = da.mean(MEMBER)
+    diff = mean.sel(time=common) - da_dini.sel(time=common)
+    rmse = np.sqrt((diff**2).mean(spatial))
+    bias = diff.mean(spatial)
+    spread = np.sqrt(da.var(MEMBER).mean(spatial))
+    return rmse, bias, spread
+
+
+def _fmt(values):
+    return " ".join(f"{v:8.3g}" for v in np.atleast_1d(values))
+
+
 def _check(name, ds_out, ds_dini, problems):
-    print(f"\n{name}:")
+    print(f"\n{name} (per valid time: ensemble-mean rmse and bias vs DINI, "
+          "ensemble spread):")
     common = np.intersect1d(ds_out.time.values, ds_dini.time.values)
     for var in ds_out.data_vars:
+        if MEMBER not in ds_out[var].dims:
+            continue  # the grid mapping
         da = ds_out[var].load()
         finite = bool(np.isfinite(da).all())
         vmin, vmax = float(da.min()), float(da.max())
@@ -55,19 +81,19 @@ def _check(name, ds_out, ds_dini, problems):
                     f"{var} outside [{lo}, {hi}]: [{vmin:.4g}, {vmax:.4g}]"
                 )
                 line += "  OUT OF RANGE"
-        if var in ds_dini and common.size:
-            diff = da.sel(time=common) - ds_dini[var].sel(time=common)
-            dims = [d for d in diff.dims if d not in ("time", "pressure")]
-            rmse = np.sqrt((diff**2).mean(dims))
-            bias = diff.mean(dims)
-            if "pressure" in diff.dims:
-                for p in diff.pressure.values:
-                    r = float(rmse.sel(pressure=p).isel(time=-1))
-                    b = float(bias.sel(pressure=p).isel(time=-1))
-                    line += f"\n      {int(p):4d} hPa: rmse {r:9.4g} bias {b:+9.4g}"
-            else:
-                r, b = float(rmse.isel(time=-1)), float(bias.isel(time=-1))
-                line += f"  vs DINI: rmse {r:9.4g} bias {b:+9.4g}"
+        levels = da.pressure.values if "pressure" in da.dims else [None]
+        for p in levels:
+            sel = {} if p is None else dict(pressure=p)
+            rmse, bias, spread = _scores(
+                da.sel(sel), ds_dini[var].sel(sel), common
+            )
+            if da.sizes[MEMBER] > 1 and not (spread.values > 0).all():
+                problems.append(f"{var} {p or ''}: zero ensemble spread")
+            label = "" if p is None else f"{int(p):4d} hPa "
+            line += (
+                f"\n      {label}rmse {_fmt(rmse.values)} | bias "
+                f"{_fmt(bias.values)} | spread {_fmt(spread.values)}"
+            )
         print(line)
 
 

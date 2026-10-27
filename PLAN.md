@@ -5,11 +5,11 @@ Status: `[x]` done, `[~]` in progress, `[ ]` to do, `[?]` needs a decision.
 
 ## Goal
 
-An operational inference container for **CLARA**, DMI's name for the
-CRPS-LAM model (Larsson et al. 2025, [arXiv:2510.09484](https://arxiv.org/abs/2510.09484)).
-CRPS-LAM is a probabilistic limited-area model: neural-lam `crps` with a
-hybrid GNN + UNet backbone (`graph_unet2`) and noise injection, trained with
-CRPS.
+An operational inference container for **CLARA** (**C**RPS-**LA**M **R**apid
+**A**tmospheric ensembles), DMI's name for the CRPS-LAM model (Larsson et al.
+2025, [arXiv:2510.09484](https://arxiv.org/abs/2510.09484)). CRPS-LAM is a
+probabilistic limited-area model: neural-lam `crps` with a hybrid GNN + UNet
+backbone (`graph_unet2`) and noise injection, trained with CRPS.
 
 It works like
 [`dmidk/mlwp-inference-container-anna`](https://github.com/dmidk/mlwp-inference-container-anna):
@@ -24,16 +24,18 @@ uploading them to S3.
 | Python package / CLI | `clara_inference` / `clara-inference` |
 | Environment variables | `CLARA_*` |
 | Image | `ghcr.io/leifdenby/mlwp-inference-container-clara` |
-| Model source | `leifdenby/real-prob-lam`, subdir `neural-lam-dev-building-ml-lams` (private) |
+| Model source | `leifdenby/real-prob-lam`, subdir `neural-lam-dev-building-ml-lams` (private), pinned at `47cc2fe` |
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
-| Repository | new anna-style repo |
+| Repository | new anna-style repo; both repos private, no git submodules |
 | Normalisation stats | **recompute** from DANRA v0.5.0 and WB2 ERA5 over the training period (they're not in the checkpoint) |
 | Interior time step | **3 h**, as in training (the local prototype wrongly used 1 h) |
 | IFS boundary | **pre-made zarr path** (`--ifs-boundary-path`) following a written contract. Fetching IFS open data is a dev utility, not part of the run |
+| Private dependencies in the image | GitHub token as a BuildKit secret (`github_token`), never a build arg or layer |
+| Checkpoint/package hosting | release assets of the private repo, downloaded through the GitHub API with the token (no Zenodo) |
 
 ## Facts established about the trained model
 
@@ -46,115 +48,114 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - `hyper_parameters` contains `args`, `config` and a pickled `datastore_boundary` that points at Berzelius paths.
 
 **Model args**
+- The args that matter and differ from `train_model`'s defaults are all in `artifact/configs/model.yaml`, checked against the parser.
 - `model=crps`, `backbone_model=graph_unet2`, `graph_name=feature_map_graph_198x148`
-- `hidden_dim=330`, `hidden_dim_grid=270`, `hidden_dim_mesh_nodes=270`, `hidden_dim_edge=32`, `hidden_layers=1`, `processor_layers=4`, `processor_model=unet`
-- `channel_mult=[1]*6`, `channel_mult_grid=[1,1,1]`, `attn_res=[10,18,36,70]`, `channel_mult_emb=4`, `channel_mult_noise=2`, `skip_type=cat`
-- `noise_dim=32`, `noise_embedding=linear`, `pred_residual=True`, `interior_dim=127`
-- all past/future forcing and boundary step counts = 1
-- `precision=bf16-mixed`, `time_delta_enc_dim=None`, `dynamic_time_deltas=False`
-- `ensemble_size=5`
+- `hidden_dim=330`, `hidden_dim_grid=270`, `hidden_dim_mesh_nodes=270`, `hidden_dim_edge=32`
+- `channel_mult=[1]*6`, `attn_res=[10,18,36,70]`, `noise_dim=32`, `noise_embedding=linear`, `pred_residual`, `precision=bf16-mixed`
+- `interior_dim=127` is computed by the model, not an argument.
+- The local prototype passed no `hidden_dim_mesh_nodes`.
 
 **Interior**
 - The full DANRA grid, 589×789 = 464,721 points, at PT3H.
 - 55 state features: 7 single-level variables, plus z/t/r/u/v/tw at 100, 200, 400, 600, 700, 850, 925 and 1000 hPa.
 - Static: lsm, orography.
 - Forcing: toa_radiation and hour/day-of-year sin/cos.
-- Training stats were computed over 2016-01-01 → 2019-10-22.
 
 **Boundary**
-- IFS forecasts in forecast layout (`analysis_time × elapsed_forecast_duration`), with lead times **every 6 h from 0 to 240 h** and cycles about every 12 h.
-- 400 km margin with `include_interior_points: True`, giving 14,858 points from the 0.25° WB2 grid.
-- 58 forcing features with ERA5 names; static is ERA5 `land_sea_mask` and `geopotential_at_surface`.
-- Normalised with **ERA5** stats (`overload_stats_path` → `overlapping_era_400km_model1_config`, 2016-01-01 → 2019-10-22, PT6H).
+- IFS forecasts in forecast layout, 00/12 UTC cycles, lead times **every 6 h from 0 to 240 h**.
+- 400 km margin with interior points included: 14,858 points.
+- 58 forcing features with ERA5 names; static is ERA5 lsm and surface geopotential.
+- Normalised with **ERA5** stats.
 
-**Normalisation stats are not in the checkpoint**
-- The buffers are registered with `persistent=False`.
-- The pickled stats datastore only references Berzelius zarrs.
+**Boundary point order**
+- The graph connects boundary nodes by index, so point order matters.
+- In training, points were ordered by longitude (0..360, increasing), then latitude (decreasing).
+- The local prototype's IFS data had latitude increasing. It rebuilt the graph for its own order, so it was self-consistent: the graph is the same up to relabelling of the boundary nodes.
+- CLARA ships the training graph, puts the IFS data on a fixed grid in training order, and checks the boundary points against the graph's boundary nodes (max 0.13 m).
 
-**How neural-lam picks the boundary forecast**
-- It uses the latest boundary `analysis_time` strictly before the model init time (`state_times[1]` = T+3 h), per `weather_dataset.py:511+`.
-- So an IFS cycle at or before T works.
+**Cycle selection**
+- neural-lam takes the latest boundary cycle strictly before T+3 h, stepping back one cycle if that leaves less than one 6 h step.
+- With 00/12 UTC cycles in training, this means the latest 00/12 cycle at or before T−3 h. CLARA gives neural-lam exactly that one cycle.
+
+**Normalisation stats**
+- They are not in the checkpoint: the buffers are `persistent=False`, and the pickled stats datastore only references Berzelius zarrs.
+- mllam-data-prep's `diff_std` is the std of **second** time differences: `calc_stats` replaces the dataset by its diff for each `diff_*` op. `diff_mean` is the mean of first differences. Verified on a local datastore to 1e-15.
+
+**Placeholder stats from a few days are unusable**
+- `day_of_year_sin/cos` then have std ≈ 0, which gives standardised values of about −1600σ and a diverging forecast.
 
 ## Phase 0: prepare `real-prob-lam` (neural-lam source)
 
-- [x] Commit the inference fixes on `prob-model-inference` (`47cc2fe`, not pushed):
-  - bf16 `mesh_rep` dtype
-  - single-device `auto` strategy
-  - graphs loaded with `weights_only=False`
-  - `persistent_workers` guard
-  - fft2 CPU fallback
-- [x] Add `NEURAL_LAM_STRICT_LOAD=1`, which makes `on_load_checkpoint` raise on missing or shape-mismatched parameters.
-- [x] Push `prob-model-inference` to `leifdenby/real-prob-lam` (pin `47cc2fe`).
-- [x] **Decided:** both repos stay private, with no submodules. The image installs neural-lam from `git+https://github.com/leifdenby/real-prob-lam@<sha>#subdirectory=neural-lam-dev-building-ml-lams`:
-  - The GitHub token is passed as a BuildKit secret (`--secret id=github_token`) and used only inside that `RUN` step, so it never ends up in an image layer.
-  - Locally, `build_image.sh` takes the token from `gh auth token`.
-  - In CI, it comes from a repo secret holding a read-only fine-grained PAT.
-  - `uv lock`/`uv sync` use the developer's own git credentials.
+- [x] Commit the inference fixes on `prob-model-inference`: bf16 `mesh_rep` dtype, single-device `auto` strategy, graph `weights_only=False`, `persistent_workers` guard, fft2 CPU fallback.
+- [x] `NEURAL_LAM_STRICT_LOAD=1`: `on_load_checkpoint` raises on missing or shape-mismatched parameters.
+- [x] Push `prob-model-inference` (`47cc2fe`).
 
 ## Phase 1: inference artifact (`src/clara_inference/artifact/`)
 
-- [ ] `configs/` holds the training configs with Berzelius paths removed:
-  - `danra_model1_config_ifs_finetune.yaml` (interior)
-  - `overlapping_ifs_all2_400km_model1_config.yaml` (boundary)
-  - `danra_model_config_ifs_all.yaml` (neural-lam config)
-  - stats configs `danra_model1_config.yaml` and `overlapping_era_400km_model1_config.yaml`
+- [x] `artifact/configs/`:
+  - the 5 training configs with Berzelius paths replaced by public sources or placeholders
+  - `model.yaml` with the checkpoint, graph and `train_model_args`
+- [x] `compute_stats`:
+  - mllam-data-prep extracts blocks (4 days, overlapping by 2 steps); the statistics are combined exactly in float64.
+  - mllam-data-prep semantics, including second-difference `diff_std`.
+  - Matches mllam-data-prep on real data to 2.5e-8 of each feature's spread; unit tests cover the block combination.
+  - `--from-processed` for placeholder stats.
+- [~] Full training-period stats run, in progress:
+  - DANRA from the ECMWF object store and WB2 ERA5 from GCS, 2016-01-01 → 2019-10-22.
+  - Logs: `artifact/build/stats-{interior,boundary}.log`.
+- [x] `assemble`:
+  - configs, stats datastores, graph from the training zip, DANRA grid from the object store
+  - boundary grid derived from the graph's boundary nodes, with ERA5 statics from WB2
+  - sanitized checkpoint, `artifact.yaml`, README
+  - `layout.check_artifact`
+- [x] `sanitize_checkpoint`:
+  - drops the training state and the pickled datastore
+  - stores `args`/`config` as plain dicts, so the checkpoint loads with `weights_only=True`
+  - weights checked identical: 1,397 tensors, 251.5 M values, 1.0 GB
+- [ ] Assemble the real artifact with the full stats; publish the package zip and checkpoint as release assets; fill in `model.yaml`'s url/md5.
 
-  It also holds `model.yaml` (checkpoint URL/md5, graph name, `train_model_args`).
-- [ ] `artifact/compute_stats.py` recomputes the training stats with mllam-data-prep:
-  - DANRA v0.5.0 (ECMWF object store), PT3H, 2016-01-01 → 2019-10-22
-  - WB2 ERA5 with the 400 km crop, PT6H, same period
-  - keeps only the `*__train__*` variables
+## Phase 2: pipeline and repo
 
-  It's run once, offline, and is heavy: roughly 11.4 k DANRA times × 55 features × 465 k points.
-- [ ] `grids/`: the DANRA grid and statics, and the ERA5 boundary statics (lsm, z_sfc) on the WB2 0.25° grid subset.
-- [ ] `graphs/feature_map_graph_198x148/`, from `graphs/feature_map_graph_198x148.zip`.
-- [ ] `sanitize_checkpoint`:
-  - drop `optimizer_states`, `lr_schedulers`, `loops`, `callbacks` and `hyper_parameters["datastore_boundary"]`
-  - check that the `state_dict` is unchanged
-  - (optionally) cast to bf16
-- [ ] Publish the package and checkpoint as a GitHub release asset or on Zenodo.
-
-## Phase 2: repo scaffold (copy and adapt from anna)
-
-- [x] Import the template files from anna `a7033c2` unmodified (a separate commit, for a clean diff); rename `anna_inference` → `clara_inference` and `ANNA_` → `CLARA_`.
-- [x] README with a domain plot (`dev-utils/plot_domain.py` → `docs/clara_domain.png`).
-
-- [ ] `pyproject.toml`, `Containerfile`, `scripts/build_image.sh`, `scripts/run_inference_container.sh`
-- [ ] `envargs.py` and `fetch_checkpoint.py`, unchanged
-- [ ] `upload_outputs.py`, unchanged
-- [ ] `run.py`, whose `Forecast` steps are:
-  1. **`regrid_dini`**: interior only, bilinear, with wind rotation and `r/100`, at 3 h steps from T+0 → T+duration+extra.
-  2. **`create_inference_dataset`**:
-     - The interior datastore takes the training stats from the artifact.
-     - The boundary datastore uses the selected IFS cycle in forecast layout, with the ERA5 stats overloaded.
-     - It writes the neural-lam `config.yaml` and symlinks the artifact graph.
-     - No configs are edited in place.
-  3. **forecast**: `neural_lam.train_model --model crps … --ensemble_size N --eval test`, with strict loading and wandb disabled or offline.
-  4. **`convert_output`**: writes single/pressure-level zarrs with an `ensemble_member` dimension.
-  5. **`upload_outputs`**: optional.
-- [ ] IFS boundary contract and validation:
-  - ERA5 variable names, 8 pressure levels
-  - 0.25° WB2 grid covering the 400 km margin
-  - `time`, `prediction_timedelta` every 6 h
-- [ ] `dev-utils/make_ifs_boundary_zarr.py`, adapted from `scripts/download_ifs_open_data_forecast.py` to produce **6-hourly** lead times.
-- [ ] CI: pytest, pre-commit, and container build → ghcr.
+- [x] Import the template files from anna `a7033c2` unmodified, then rename to `clara_inference`/`CLARA_`.
+- [x] README with name, domain plot, configs, IFS contract and options; PLAN.md.
+- [x] `pyproject.toml`: neural-lam from real-prob-lam@`47cc2fe`, the training mllam-data-prep pin, torch 2.12 cu130; `uv.lock`.
+- [x] `regrid_dini`: interior only, 3-hourly.
+- [x] `storage.open_zarr`: anonymous S3 reads without AWS credentials (DINI's bucket is public).
+- [x] `ifs_boundary`: contract check, cycle selection, lead times, boundary grid in training order, point-order check against the graph.
+- [x] `create_inference_dataset`:
+  - interior and boundary datastores
+  - checks that the stats features match by position
+  - graph link and neural-lam config
+- [x] `run`: `--ensemble-size`, required `--ifs-boundary-path`, strict loading, no graph build.
+- [x] `convert_output`: `ensemble_member` dimension, CLARA metadata, chunked per member and time.
+- [x] `fetch_checkpoint`: `GITHUB_TOKEN` for API release assets; the token is dropped on cross-host redirects.
+- [x] `dev-utils/make_ifs_boundary_zarr.py` (open data, 00/12 cycle, 6-hourly).
+- [x] `dev-utils/check_forecast_output.py`: ensemble-mean RMSE/bias against DINI, and spread.
+- [x] `Containerfile`:
+  - token secret
+  - `--no-sources` plus `scripts/container_pins.py` (git pins from pyproject), so torch is the base image's
+  - artifact from `local` or `release`
+- [x] `scripts/build_image.sh` (token from `gh auth token`), `scripts/run_inference_container.sh`.
+- [x] CI: pytest and container build/publish with the `REAL_PROB_LAM_TOKEN` secret and `PACKAGE_URL`/`PACKAGE_MD5` variables.
+- [ ] Build the image locally and run a forecast in it.
 
 ## Phase 3: tests (CPU)
 
-- [ ] Port anna's tests (envargs, run config, regrid, upload, fetch_checkpoint).
-- [ ] New tests:
-  - IFS contract and cycle selection
-  - config feature order against the training configs
-  - `model.yaml` args against the checkpoint hparams
-  - `convert_output` with members
+- [x] Ported anna's tests: envargs, run config including the README option table, regrid, upload, fetch_checkpoint including token handling.
+- [x] New tests: IFS cycle selection, lead times, contract, reordering onto the boundary grid, point-order check, `convert_output` with members, `compute_stats` block combination.
 
 ## Verification
 
-- [ ] `uv run pytest`; build the image.
-- [ ] The sanitized checkpoint loads with `NEURAL_LAM_STRICT_LOAD=1`.
-- [ ] Recomputed stats are sane: same order as the subset stats, all std > 0.
-- [ ] End-to-end on the DGX Spark: no NaNs, plausible values, ensemble spread > 0 that grows with lead time, sensible CRPS against DINI; record runtime and memory.
+- [x] `uv run pytest`: all pass.
+- [x] The sanitized checkpoint loads with strict loading: 1,397 parameters, 0 missing, 0 mismatched.
+- [x] End-to-end mechanics on the DGX Spark: 2026-10-26T06Z +18 h, 5 members, about 2.5 min for forecast and conversion; the boundary order check passed.
+- [ ] End-to-end with the real stats: no NaNs, plausible values, spread > 0 and growing, RMSE against DINI of the size of short-range forecast differences. The placeholder-stats run diverges, as expected.
+- [ ] Image build and container run.
 
 ## Log
 
-- 2026-10-27: Explored anna and the local prototype; decisions above. Phase 0 commit `47cc2fe`. From the checkpoint: IFS lead step is 6 h, and the stats are not recoverable from it.
+- 2026-10-27:
+  - Explored anna and the local prototype; made the decisions above.
+  - Phase 0 commit `47cc2fe`. From the checkpoint: the IFS lead step is 6 h, and the stats are not recoverable.
+  - Found the boundary point-order issue and the second-difference `diff_std`.
+  - Pipeline runs end to end with placeholder stats; started the full stats runs.

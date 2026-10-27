@@ -1,10 +1,14 @@
 # Build the inference image (x86_64) on every push and pull request, and
 # publish it to ghcr.io for `v*` tags (as `<tag>` and `latest`).
 #
-# The inference package comes from Zenodo record 23293148 (the PACKAGE_URL
-# and PACKAGE_MD5 defaults in the Containerfile, also in
-# scripts/build_image.sh). Its files can't be downloaded while the record is
-# a draft, so the build fails until it's published.
+# Needs (repository settings):
+# - secret REAL_PROB_LAM_TOKEN: a fine-grained token with read access to the
+#   contents of leifdenby/real-prob-lam (neural-lam) and of this repository
+#   (release assets: the inference package and checkpoint). Passed to the
+#   build as the `github_token` secret, never as a build arg
+# - variables PACKAGE_URL and PACKAGE_MD5: the inference package zip (a
+#   GitHub API release asset URL of this repository) and its md5
+# Without them the build is skipped.
 name: Build Container
 
 on:
@@ -26,15 +30,25 @@ jobs:
   build:
     name: Build image
     runs-on: ubuntu-latest
+    env:
+      HAVE_CONFIG: ${{ secrets.REAL_PROB_LAM_TOKEN != '' && vars.PACKAGE_URL != '' && vars.PACKAGE_MD5 != '' }}
 
     steps:
+      - name: Skip without the token and package configuration
+        if: env.HAVE_CONFIG != 'true'
+        run: >-
+          echo "::notice::REAL_PROB_LAM_TOKEN, PACKAGE_URL or PACKAGE_MD5 not
+          set, skipping the image build"
+
       - name: Check out repository
+        if: env.HAVE_CONFIG == 'true'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0  # all tags, for the version
 
       - &free-disk-space
         name: Free disk space (the base image is large)
+        if: env.HAVE_CONFIG == 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: true
@@ -44,37 +58,21 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - name: Install uv
+      - &install-uv
+        name: Install uv
+        if: env.HAVE_CONFIG == 'true'
         uses: astral-sh/setup-uv@v6
 
       - &prepare-context
         name: Prepare the build context
+        if: env.HAVE_CONFIG == 'true'
         # The Containerfile always copies LOCAL_ARTIFACT_DIR: an empty
-        # directory with ARTIFACT_SOURCE=zenodo. Check that the package can
-        # be downloaded from Zenodo (not while the record is a draft) or its
-        # GitHub release mirror.
-        run: |
-          mkdir -p artifact/build/.empty
-          arg() { sed -n "s/^ARG $1=\"\(.*\)\"$/\1/p" Containerfile; }
-          url=$(arg PACKAGE_URL)
-          mirror=$(arg PACKAGE_MIRROR_URL)
-          check() {
-            curl -sfIL --connect-timeout 30 --retry 2 --retry-delay 10 \
-              --retry-all-errors -o /dev/null "$1"
-          }
-          if ! check "$url"; then
-            if check "$mirror"; then
-              echo "::warning::can't download $url, the build uses the" \
-                "mirror $mirror"
-            else
-              echo "::error::can't download the inference package $url" \
-                "or its mirror $mirror (is the Zenodo record published?)"
-              exit 1
-            fi
-          fi
+        # directory with ARTIFACT_SOURCE=release
+        run: mkdir -p artifact/build/.empty
 
       - &version
         name: Get the package version from the git tag
+        if: env.HAVE_CONFIG == 'true'
         # the build context has no .git, so the Containerfile gets the
         # setuptools-scm version as a build arg
         id: version
@@ -83,15 +81,24 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "clara-inference version $version"
 
-      - name: Set up Docker Buildx
+      - &buildx
+        name: Set up Docker Buildx
+        if: env.HAVE_CONFIG == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Build image
+        if: env.HAVE_CONFIG == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Containerfile
-          build-args: IMAGE_VERSION=${{ steps.version.outputs.version }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.version }}
+            ARTIFACT_SOURCE=release
+            PACKAGE_URL=${{ vars.PACKAGE_URL }}
+            PACKAGE_MD5=${{ vars.PACKAGE_MD5 }}
+          secrets: |
+            github_token=${{ secrets.REAL_PROB_LAM_TOKEN }}
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -100,16 +107,18 @@ jobs:
     name: Publish image
     needs: build
     if: >-
-      github.repository_owner == 'dmidk'
-      && github.event_name == 'push'
+      github.event_name == 'push'
       && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    env:
+      HAVE_CONFIG: ${{ secrets.REAL_PROB_LAM_TOKEN != '' && vars.PACKAGE_URL != '' && vars.PACKAGE_MD5 != '' }}
     permissions:
       contents: read
       packages: write
 
     steps:
       - name: Check out repository
+        if: env.HAVE_CONFIG == 'true'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0  # all tags, for the version
@@ -118,15 +127,14 @@ jobs:
 
       - *prepare-context
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - *install-uv
 
       - *version
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - *buildx
 
       - name: Log in to GitHub Container Registry
+        if: env.HAVE_CONFIG == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -134,6 +142,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract image metadata
+        if: env.HAVE_CONFIG == 'true'
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -143,11 +152,18 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push image
+        if: env.HAVE_CONFIG == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Containerfile
-          build-args: IMAGE_VERSION=${{ steps.version.outputs.version }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.version }}
+            ARTIFACT_SOURCE=release
+            PACKAGE_URL=${{ vars.PACKAGE_URL }}
+            PACKAGE_MD5=${{ vars.PACKAGE_MD5 }}
+          secrets: |
+            github_token=${{ secrets.REAL_PROB_LAM_TOKEN }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

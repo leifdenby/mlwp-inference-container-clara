@@ -8,12 +8,15 @@ import pytest
 from clara_inference import envargs, run
 
 README = Path(__file__).parents[1] / "README.md"
+IFS = "s3://bucket/ifs/2026-10-01T000000Z/ifs.zarr"
 
 
 @pytest.fixture
 def artifact(tmp_path):
     (tmp_path / "configs").mkdir()
-    (tmp_path / "configs" / "model.yaml").write_text("{}\n")
+    (tmp_path / "configs" / "model.yaml").write_text(
+        "interior_datastore: danra_model1_config_ifs_finetune.yaml\n"
+    )
     return tmp_path
 
 
@@ -36,6 +39,7 @@ def test_config_from_env(artifact, tmp_path):
     environ = {
         "CLARA_ANALYSIS_TIME": "2026-10-01T06:00+02:00",
         "CLARA_FORECAST_DURATION": "PT30H",
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
         "CLARA_ARTIFACT_PATH": str(artifact),
         "CLARA_WORKDIR": str(tmp_path / "work"),
     }
@@ -45,8 +49,9 @@ def test_config_from_env(artifact, tmp_path):
     assert args.dini_root == (
         "s3://harmonie-zarr/dini/control/2026-10-01T040000Z/"
     )
+    assert args.ensemble_size == run.DEFAULT_ENSEMBLE_SIZE
     assert sources["forecast_duration"] == "env"
-    assert sources["boundary_source"] == "default"
+    assert sources["ensemble_size"] == "default"
 
 
 @pytest.mark.parametrize("duration", ["PT6H", "PT13H", "P1M", "18h"])
@@ -54,6 +59,7 @@ def test_invalid_forecast_duration(artifact, duration):
     argv = ["--analysis-time", "2026-10-01T00:00"]
     environ = {
         "CLARA_FORECAST_DURATION": duration,
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
         "CLARA_ARTIFACT_PATH": str(artifact),
     }
     with pytest.raises(SystemExit) as ex:
@@ -61,10 +67,21 @@ def test_invalid_forecast_duration(artifact, duration):
     assert ex.value.code == 2
 
 
-def test_ifs_needs_a_boundary_path(artifact):
+@pytest.mark.parametrize("size", ["0", "-1", "two"])
+def test_invalid_ensemble_size(artifact, size):
+    argv = ["--analysis-time", "2026-10-01T00:00", "--ensemble-size", size]
+    environ = {
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
+        "CLARA_ARTIFACT_PATH": str(artifact),
+    }
+    with pytest.raises(SystemExit) as ex:
+        run.parse_config(argv, environ)
+    assert ex.value.code == 2
+
+
+def test_ifs_boundary_path_is_required(artifact):
     argv = [
         "--analysis-time", "2026-10-01T00:00",
-        "--boundary-source", "ifs",
         "--artifact-path", str(artifact),
     ]  # fmt: skip
     with pytest.raises(SystemExit) as ex:
@@ -74,8 +91,12 @@ def test_ifs_needs_a_boundary_path(artifact):
 
 def test_missing_artifact(tmp_path):
     argv = ["--analysis-time", "2026-10-01T00:00"]
+    environ = {
+        "CLARA_ARTIFACT_PATH": str(tmp_path),
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
+    }
     with pytest.raises(SystemExit) as ex:
-        run.parse_config(argv, {"CLARA_ARTIFACT_PATH": str(tmp_path)})
+        run.parse_config(argv, environ)
     assert ex.value.code == 2
 
 
@@ -90,9 +111,24 @@ def _forecast(artifact, monkeypatch, environ):
     for name, value in AMBIENT.items():
         monkeypatch.setenv(name, value)
     argv = ["--analysis-time", "2026-10-01T00:00"]
-    environ = {"CLARA_ARTIFACT_PATH": str(artifact), **environ}
+    environ = {
+        "CLARA_ARTIFACT_PATH": str(artifact),
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
+        **environ,
+    }
     _, args, _ = run.parse_config(argv, environ)
     return run.Forecast(args)
+
+
+def test_forecast_steps_and_grid(artifact, monkeypatch):
+    forecast = _forecast(
+        artifact, monkeypatch, {"CLARA_FORECAST_DURATION": "PT18H"}
+    )
+    # initial states at T+0 and T+3h, predictions T+6h .. T+18h
+    assert forecast.ar_steps == 5
+    assert forecast.danra_grid == (
+        artifact / "grids" / "danra_model1_config_ifs_finetune.grid.zarr"
+    )
 
 
 def test_step_env_per_side(artifact, monkeypatch):
@@ -130,7 +166,11 @@ def test_step_env_unchanged_without_options(artifact, monkeypatch):
 )
 def test_output_options_need_a_prefix(artifact, name):
     argv = ["--analysis-time", "2026-10-01T00:00"]
-    environ = {"CLARA_ARTIFACT_PATH": str(artifact), name: "x"}
+    environ = {
+        "CLARA_ARTIFACT_PATH": str(artifact),
+        "CLARA_IFS_BOUNDARY_PATH": IFS,
+        name: "x",
+    }
     with pytest.raises(SystemExit) as ex:
         run.parse_config(argv, environ)
     assert ex.value.code == 2

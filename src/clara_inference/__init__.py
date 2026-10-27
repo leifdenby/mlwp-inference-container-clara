@@ -1,4 +1,5 @@
-"""Inference for ANNA, the DANRA ML limited-area weather model."""
+"""Inference for CLARA (CRPS-LAM Rapid Atmospheric ensembles), the CRPS-LAM
+probabilistic ML limited-area weather model."""
 import importlib.metadata
 
 try:

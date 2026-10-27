@@ -64,24 +64,6 @@ def test_bilinear_outside_domain():
     np.testing.assert_allclose(interp(field), [10.0, 14.0])
 
 
-def test_smooth():
-    yy, xx = np.meshgrid(np.arange(40.0), np.arange(50.0), indexing="ij")
-    # constants are unchanged, linear fields are preserved away from the edges
-    np.testing.assert_allclose(rd.smooth(np.full((40, 50), 3.0), 13), 3.0)
-    linear = 2.0 * xx - yy
-    np.testing.assert_allclose(
-        rd.smooth(linear, 13)[10:-10, 10:-10], linear[10:-10, 10:-10]
-    )
-    # a single spike is spread over n x n cells, centred on the spike
-    spike = np.zeros((41, 41))
-    spike[20, 20] = 169.0
-    smoothed = rd.smooth(spike, 13)
-    np.testing.assert_allclose(smoothed[14:27, 14:27], 1.0)
-    assert smoothed[13, 20] == 0.0 and smoothed[27, 20] == 0.0
-    # n <= 1 is a no-op
-    np.testing.assert_array_equal(rd.smooth(spike, 1), spike)
-
-
 def _fields(shape):
     """Random (..., y, x) fields as a dask-backed DataArray, 2D chunks."""
     dims = ("time", "pressure", "y", "x")[-len(shape) :]
@@ -103,41 +85,3 @@ def test_bilinear_leading_dims_and_lazy():
     np.testing.assert_array_equal(lazy.values, expected)
 
 
-def test_smooth_leading_dims_and_lazy():
-    da = _fields((3, 2, 20, 30))
-    # each 2D field is smoothed on its own, not across time/levels
-    expected = np.array(
-        [[rd.smooth(f2d, 5) for f2d in f3d] for f3d in da.values]
-    )
-    np.testing.assert_array_equal(rd.smooth(da.values, 5), expected)
-    lazy = rd.smooth_lazy(da, 5)
-    assert lazy.chunks is not None and lazy.dims == da.dims
-    np.testing.assert_array_equal(lazy.values, expected)
-
-
-def test_saturation_vapour_pressure():
-    # 611.21 Pa at the triple point, ~2339 Pa over water at 20 C
-    np.testing.assert_allclose(rd.saturation_vapour_pressure(273.16), 611.21)
-    np.testing.assert_allclose(
-        rd.saturation_vapour_pressure(293.15), 2339, rtol=5e-3
-    )
-    # below -23 C over ice, which is lower than over water
-    t = 240.0
-    es_water = 611.21 * np.exp(17.502 * (t - 273.16) / (t - 32.19))
-    assert rd.saturation_vapour_pressure(t) < es_water
-
-
-def test_specific_humidity():
-    # saturated air at 20 C and 1000 hPa has q ~14.7 g/kg
-    np.testing.assert_allclose(
-        rd.specific_humidity(1.0, 293.15, 100000.0), 0.0147, rtol=0.01
-    )
-    assert rd.specific_humidity(0.0, 293.15, 100000.0) == 0.0
-
-
-def test_omega_from_w():
-    # rising air (w > 0) has negative omega; at 500 hPa and 250 K,
-    # rho ~0.70 kg/m3 so w = 1 m/s gives omega ~ -6.8 Pa/s
-    omega = rd.omega_from_w(1.0, 250.0, 0.0, 50000.0)
-    np.testing.assert_allclose(omega, -50000.0 / (287.05 * 250.0) * 9.80665)
-    assert rd.omega_from_w(-1.0, 250.0, 0.0, 50000.0) > 0

@@ -51,7 +51,8 @@ import xarray as xr
 import yaml
 from loguru import logger
 
-from clara_inference import ifs_boundary
+from clara_inference import ifs_boundary, storage
+from clara_inference.artifact.layout import stats_datastore_path
 from clara_inference.convert_output import projection_crs
 from clara_inference.model_configs import (
     inference_neural_lam_config,
@@ -105,6 +106,26 @@ def _check_no_missing(ds, variables, what):
         raise ValueError(f"missing values in the {what}: {n_missing}")
 
 
+def _check_stats_features(ds, fp_stats_zarr):
+    """
+    neural-lam applies the statistics of the stats datastore by position, so
+    its features must be those of the datastore, in the same order.
+    """
+    ds_stats = xr.open_zarr(fp_stats_zarr)
+    for category in ["state", "forcing", "static"]:
+        dim = f"{category}_feature"
+        if dim not in ds.dims:
+            continue
+        have = [str(f) for f in ds[dim].values]
+        stats = [str(f) for f in ds_stats[dim].values]
+        if have != stats:
+            raise ValueError(
+                f"the {category} features of the datastore don't match those "
+                f"of the training statistics in {fp_stats_zarr}: {have} vs "
+                f"{stats}"
+            )
+
+
 def _create_interior_datastore(
     artifact, configs, interior_dir, analysis_time, interior_end, workdir
 ):
@@ -128,6 +149,10 @@ def _create_interior_datastore(
     _write_config(config, fp_config)
     ds = mdp.create_dataset(config=config)
     _check_no_missing(ds, ["state", "forcing", "static"], "interior datastore")
+    _check_stats_features(
+        ds,
+        stats_datastore_path(artifact, configs.interior_stats_datastore),
+    )
     ds.to_zarr(workdir / f"{name}.zarr", mode="w", consolidated=True)
     logger.info(
         f"interior datastore: {ds.time.size} time steps {start} .. {end}, "
@@ -150,7 +175,7 @@ def _create_boundary_datastore(
         artifact / "grids" / f"{name}.grid.zarr", decode_timedelta=True
     ).load()
     ds_input = ifs_boundary.prepare_boundary_input(
-        xr.open_zarr(fp_ifs, decode_timedelta=True),
+        storage.open_zarr(fp_ifs, decode_timedelta=True),
         ds_grid,
         analysis_time,
         forecast_duration,
@@ -166,8 +191,9 @@ def _create_boundary_datastore(
         input_config.path = str(fp_input.resolve())
     cycle = ds_input.time.values[0]
     start = str(cycle)[:16]
-    config.output.coord_ranges["analysis_time"].start = start
-    config.output.coord_ranges["analysis_time"].end = start
+    # the input has only the selected cycle (mllam-data-prep doesn't allow a
+    # coordinate range with start == end)
+    del config.output.coord_ranges["analysis_time"]
     config.output.splitting.splits = _splits(start, start)
     # crop around the inference interior dataset (same grid as in training);
     # mllam-data-prep resolves the path relative to the CWD, so absolute
@@ -179,6 +205,10 @@ def _create_boundary_datastore(
     _write_config(config, fp_config)
     ds = mdp.create_dataset(config=config)
     _check_no_missing(ds, ["forcing", "static"], "boundary datastore")
+    _check_stats_features(
+        ds,
+        stats_datastore_path(artifact, configs.boundary_stats_datastore),
+    )
 
     ifs_boundary.check_point_order(
         ds,

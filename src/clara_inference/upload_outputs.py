@@ -12,7 +12,7 @@ Credentials as for reading DINI (e.g. AWS_PROFILE).
 Usage:
     python -m clara_inference.upload_outputs \\
         --outputs inference_workdir/outputs \\
-        --analysis-time 2026-10-01T00:00 --prefix s3://anna-forecasts/
+        --analysis-time 2026-10-01T00:00 --prefix s3://clara-forecasts/
 """
 import argparse
 from pathlib import Path

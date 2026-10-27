@@ -46,6 +46,8 @@ import pyproj
 import xarray as xr
 from loguru import logger
 
+from clara_inference import storage
+
 DANRA_SL_URL = (
     "https://object-store.os-api.cci1.ecmwf.int"
     "/danra/v0.5.0/single_levels.zarr/"
@@ -185,8 +187,8 @@ class BilinearInterpolator:
 
 def _open_dini(dini_root):
     root = str(dini_root).rstrip("/")
-    ds_sl = xr.open_zarr(f"{root}/single_levels.zarr")
-    ds_pl = xr.open_zarr(f"{root}/pressure_levels.zarr")
+    ds_sl = storage.open_zarr(f"{root}/single_levels.zarr")
+    ds_pl = storage.open_zarr(f"{root}/pressure_levels.zarr")
     return ds_sl, ds_pl
 
 

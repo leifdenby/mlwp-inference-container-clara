@@ -19,8 +19,8 @@ def no_wait(monkeypatch):
 def _urlopen(responses):
     calls = []
 
-    def urlopen(url, timeout=None):
-        calls.append(url)
+    def urlopen(url, timeout=None):  # a urllib.request.Request
+        calls.append(url.full_url)
         response = responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -31,26 +31,26 @@ def _urlopen(responses):
 
 def test_download_retries_server_errors(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([_http_error(504), b"checkpoint"])
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     fp = tmp_path / "ckpt"
-    fetch_checkpoint._download("url", fp)
+    fetch_checkpoint._download("https://example.org/ckpt", fp)
     assert fp.read_bytes() == b"checkpoint"
     assert len(calls) == 2
 
 
 def test_download_gives_up(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([_http_error(504)] * 3)
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     with pytest.raises(urllib.error.HTTPError):
-        fetch_checkpoint._download("url", tmp_path / "ckpt", attempts=3)
+        fetch_checkpoint._download("https://example.org/ckpt", tmp_path / "ckpt", attempts=3)
     assert len(calls) == 3
 
 
 def test_download_no_retry_on_client_error(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([_http_error(404), b"checkpoint"])
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     with pytest.raises(urllib.error.HTTPError):
-        fetch_checkpoint._download("url", tmp_path / "ckpt")
+        fetch_checkpoint._download("https://example.org/ckpt", tmp_path / "ckpt")
     assert len(calls) == 1
 
 
@@ -68,7 +68,7 @@ def _artifact(tmp_path, content):
 
 def test_fetch_uses_mirror(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([_http_error(504)] * 3 + [b"checkpoint"])
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     artifact = _artifact(tmp_path, b"checkpoint")
     fp = fetch_checkpoint.fetch_checkpoint(
         artifact, mirror_urls=["https://mirror/ckpt"]
@@ -79,7 +79,7 @@ def test_fetch_uses_mirror(tmp_path, monkeypatch, no_wait):
 
 def test_fetch_md5_mismatch_uses_mirror(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([b"corrupt", b"checkpoint"])
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     artifact = _artifact(tmp_path, b"checkpoint")
     fp = fetch_checkpoint.fetch_checkpoint(
         artifact, mirror_urls=["https://mirror/ckpt"]
@@ -90,7 +90,7 @@ def test_fetch_md5_mismatch_uses_mirror(tmp_path, monkeypatch, no_wait):
 
 def test_fetch_all_fail(tmp_path, monkeypatch, no_wait):
     urlopen, calls = _urlopen([_http_error(404), _http_error(410)])
-    monkeypatch.setattr(fetch_checkpoint.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_checkpoint._opener, "open", urlopen)
     artifact = _artifact(tmp_path, b"checkpoint")
     with pytest.raises(urllib.error.HTTPError) as ex:
         fetch_checkpoint.fetch_checkpoint(
@@ -98,3 +98,33 @@ def test_fetch_all_fail(tmp_path, monkeypatch, no_wait):
         )
     assert ex.value.code == 410  # the last error
     assert not (artifact / "model.ckpt").exists()
+
+
+ASSET_URL = "https://api.github.com/repos/o/r/releases/assets/1"
+
+
+def test_github_token_for_release_assets(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    request = fetch_checkpoint._request(ASSET_URL)
+    assert request.get_header("Authorization") == "Bearer secret"
+    assert request.get_header("Accept") == "application/octet-stream"
+    # never sent to other hosts
+    request = fetch_checkpoint._request("https://zenodo.org/ckpt")
+    assert request.get_header("Authorization") is None
+
+
+def test_no_token_without_github_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert fetch_checkpoint._request(ASSET_URL).header_items() == []
+
+
+def test_token_dropped_on_redirect_to_other_host(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    request = fetch_checkpoint._request(ASSET_URL)
+    handler = fetch_checkpoint._DropAuthOnRedirect()
+    storage = "https://objects.githubusercontent.com/signed?x=1"
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {}, storage
+    )
+    assert redirected.full_url == storage
+    assert not redirected.has_header("Authorization")

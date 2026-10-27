@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run an ANNA forecast in the inference image (built with build_image.sh).
+# Run a CLARA ensemble forecast in the inference image (built with build_image.sh).
 #
 # Usage:
 #   scripts/run_inference_container.sh [<ANALYSIS_TIME> [<FORECAST_DURATION>]] [<option>...]
@@ -15,7 +15,7 @@
 #   CLARA_WORKDIR       the host directory for the inputs and outputs (default
 #                      ./inference_workdir), mounted as the container's
 #                      workdir; the forecast is written to outputs/ in it
-#   CLARA_IFS_BOUNDARY_PATH  a local IFS zarr is mounted read-only at the same
+#   CLARA_IFS_BOUNDARY_PATH  (required) a local IFS zarr is mounted read-only at the same
 #                      path
 # Settings of this script:
 #   CONTAINER_APP      podman (default) or docker

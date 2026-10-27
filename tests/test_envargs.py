@@ -24,7 +24,7 @@ def _parse(argv, environ):
 
 
 def test_env_var_name():
-    name = envargs.env_var_name("ANNA", "--forecast-duration")
+    name = envargs.env_var_name("CLARA", "--forecast-duration")
     assert name == "CLARA_FORECAST_DURATION"
 
 

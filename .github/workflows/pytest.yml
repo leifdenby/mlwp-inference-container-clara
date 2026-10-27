@@ -1,4 +1,6 @@
-# Run the tests in the locked environment (uv.lock)
+# Run the tests in the locked environment (uv.lock). neural-lam comes from
+# the private leifdenby/real-prob-lam, read with the REAL_PROB_LAM_TOKEN
+# repository secret (see container-image.yml)
 name: pytest
 
 on:
@@ -27,6 +29,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Install the locked environment
+        env:
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.REAL_PROB_LAM_TOKEN }}@github.com/leifdenby/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/leifdenby/
         run: uv sync --frozen
 
       - name: Run pytest

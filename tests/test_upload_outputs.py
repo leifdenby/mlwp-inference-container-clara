@@ -29,8 +29,8 @@ def _outputs(tmp_path, n_times=3, value=1.0):
 
 def test_target_prefix():
     assert (
-        uo.target_prefix("s3://anna-forecasts/", "2026-10-01T00:00")
-        == "s3://anna-forecasts/2026-10-01T000000Z"
+        uo.target_prefix("s3://clara-forecasts/", "2026-10-01T00:00")
+        == "s3://clara-forecasts/2026-10-01T000000Z"
     )
     assert (
         uo.target_prefix("s3://b/runs", np.datetime64("2026-10-01T06:00"))

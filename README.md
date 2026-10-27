@@ -174,8 +174,12 @@ variable, which wins over the default. This is the same convention as ANNA
 | `--workdir` | `CLARA_WORKDIR` | `inference_workdir` | working directory; outputs go in `outputs/` |
 | `--artifact-path` | `CLARA_ARTIFACT_PATH` | `inference_artifact` | the inference artifact, including the checkpoint |
 | `--skip-completed` | `CLARA_SKIP_COMPLETED` | `false` | skip the stages already completed in the workdir |
-| `--output-s3-prefix` | `CLARA_OUTPUT_S3_PREFIX` | | also upload the outputs to `{prefix}/<analysis time>/` |
-| `--{input,output}-s3-endpoint-url`, `--{input,output}-aws-profile` | `CLARA_…` | (AWS config) | S3 endpoint and profile for reading the inputs and for the upload |
+| `--output-s3-prefix` | `CLARA_OUTPUT_S3_PREFIX` | | also upload the outputs to `{prefix}/<analysis time>/`, replacing an earlier upload for that analysis time |
+| `--input-s3-endpoint-url` | `CLARA_INPUT_S3_ENDPOINT_URL` | (AWS config) | S3 endpoint for reading DINI and IFS |
+| `--input-aws-profile` | `CLARA_INPUT_AWS_PROFILE` | (AWS config) | AWS profile for reading DINI and IFS |
+| `--output-s3-endpoint-url` | `CLARA_OUTPUT_S3_ENDPOINT_URL` | (AWS config) | S3 endpoint for the upload (needs `--output-s3-prefix`) |
+| `--output-aws-profile` | `CLARA_OUTPUT_AWS_PROFILE` | (AWS config) | AWS profile for the upload (needs `--output-s3-prefix`) |
+| `--debugger` | `CLARA_DEBUGGER` | | `ipdb` to debug the python steps on exceptions |
 | `--log-level` | `CLARA_LOG_LEVEL` | `INFO` | loguru level |
 
 ### IFS boundary contract

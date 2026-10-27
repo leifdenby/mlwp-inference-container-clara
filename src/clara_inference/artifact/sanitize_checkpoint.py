@@ -13,14 +13,19 @@ The training checkpoint (about 3 GB) holds, besides the weights and the
   `train_model --eval` passes the inference datastores to
   `load_from_checkpoint`
 
-Both are dropped. The weights (float32), `args` and `config` are kept
-unchanged, which is checked after writing.
+Both are dropped. The weights (float32) are kept unchanged, which is checked
+after writing. The `args` (an argparse.Namespace) and `config` (a neural-lam
+config dataclass) hyper-parameters are kept as plain dicts: inference passes
+both to `load_from_checkpoint` explicitly, so they are provenance only, and
+with only plain types the checkpoint loads with torch's (default)
+`weights_only=True`, which never runs code from the file.
 
 Usage:
     python -m clara_inference.artifact.sanitize_checkpoint \\
         <checkpoint_in> <checkpoint_out>
 """
 import argparse
+import dataclasses
 import pickle
 import types
 
@@ -108,8 +113,34 @@ def sanitize_checkpoint(ckpt):
                 f"hyper_parameters[{key!r}] still contains objects that could "
                 "not be unpickled, refusing to write a checkpoint with stubs"
             )
-    out["hyper_parameters"] = hparams
+    out["hyper_parameters"] = {k: _plain(v) for k, v in hparams.items()}
     return out
+
+
+def _plain(obj):
+    """
+    `obj` with namespaces and dataclasses as dicts (recursively); a
+    dataclass's dict records its class name as `__class__`.
+    """
+    if isinstance(obj, argparse.Namespace):
+        obj = vars(obj)
+    elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        fields = {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+        obj = {"__class__": type(obj).__name__, **fields}
+    if isinstance(obj, dict):
+        return {str(k): _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v) for v in obj]
+    # subclasses of the basic types (e.g. neural-lam's DatastoreKindStr)
+    for base in (bool, int, float, str):
+        if isinstance(obj, base):
+            return base(obj)
+    if obj is not None:
+        raise TypeError(
+            f"can't store {type(obj)} in the checkpoint's hyper-parameters "
+            "as a plain type"
+        )
+    return obj
 
 
 def check_same_weights(ckpt_a, ckpt_b):
@@ -131,10 +162,10 @@ def main():
     ckpt = load_checkpoint(args.checkpoint_in)
     out = sanitize_checkpoint(ckpt)
     torch.save(out, args.checkpoint_out)
-    # the result loads without stubs (neural-lam's own classes aside, the
-    # args are an argparse.Namespace) and has the same weights
+    # the result loads with weights_only=True (plain types only) and has the
+    # same weights
     reloaded = torch.load(
-        args.checkpoint_out, map_location="cpu", weights_only=False
+        args.checkpoint_out, map_location="cpu", weights_only=True
     )
     check_same_weights(ckpt, reloaded)
     n_params = sum(t.numel() for t in reloaded["state_dict"].values())

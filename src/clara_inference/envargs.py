@@ -2,16 +2,16 @@
 Set the options of a command line interface from environment variables.
 
 The convention, for the entrypoints of MLWP inference containers: each model
-has an environment variable prefix (e.g. `ANNA`), and every option
+has an environment variable prefix (e.g. `CLARA`), and every option
 `--some-option` of its entrypoint can also be set with the variable
 `{PREFIX}_SOME_OPTION`. An option given on the command line wins over its
 variable, which wins over the option's default:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--forecast-duration", default="PT18H")
-    envargs.add_env_help(parser, "ANNA")
-    args, sources = envargs.parse_args(parser, "ANNA")
-    for line in envargs.config_lines(parser, args, sources, "ANNA"):
+    envargs.add_env_help(parser, "CLARA")
+    args, sources = envargs.parse_args(parser, "CLARA")
+    for line in envargs.config_lines(parser, args, sources, "CLARA"):
         logger.info(line)
 
 - The variables are turned into command line arguments placed before the
@@ -42,7 +42,7 @@ SOURCE_CLI, SOURCE_ENV, SOURCE_DEFAULT = "cli", "env", "default"
 
 
 def env_var_name(prefix, option):
-    """`("ANNA", "--forecast-duration")` -> `CLARA_FORECAST_DURATION`."""
+    """`("CLARA", "--forecast-duration")` -> `CLARA_FORECAST_DURATION`."""
     return f"{prefix}_{option.lstrip('-').upper().replace('-', '_')}"
 
 

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG BASE_IMAGE="pytorch/pytorch:2.10.0-cuda13.0-cudnn9-runtime"
 FROM ${BASE_IMAGE}
 
@@ -17,15 +18,31 @@ ARG IMAGE_VERSION="0.0.0+unknown"
 LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
 
 COPY pyproject.toml README.md ./
+COPY scripts/container_pins.py ./scripts/
 COPY src/ ./src
 
 # export current torch version to constraints file
 RUN python -c 'import torch; print(f"torch=={torch.__version__}")' > constraints.txt
-# install with constraints
-RUN SETUPTOOLS_SCM_PRETEND_VERSION_FOR_CLARA_INFERENCE="${IMAGE_VERSION}" \
-    uv pip install --break-system-packages --system --constraints constraints.txt .
+# the git pins of pyproject.toml ([tool.uv.sources] and
+# override-dependencies) as requirement files: the install below uses
+# --no-sources, so that torch is the base image's (not from the cu130 index
+# in [tool.uv.sources])
+RUN python scripts/container_pins.py pyproject.toml pins
+# install with constraints. neural-lam comes from the private repository
+# leifdenby/real-prob-lam: the GitHub token is a build secret (`--secret
+# id=github_token`, see build_image.sh), only available during this step
+# (through GIT_CONFIG_* variables of this step) and never written to an
+# image layer
+RUN --mount=type=secret,id=github_token,required=true \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/" \
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_CLARA_INFERENCE="${IMAGE_VERSION}" \
+    uv pip install --break-system-packages --system --no-sources --no-cache \
+        --constraints constraints.txt --overrides pins/overrides.txt \
+        --requirements pins/requirements.txt .
 # check that neural-lam imports (with the base image's torch), and show the
-# versions (neural-lam-dev has no __version__)
+# versions
 RUN python -c 'import importlib.metadata as md, clara_inference, neural_lam, torch; print("clara-inference", clara_inference.__version__, "neural-lam", md.version("neural-lam"), "torch", torch.__version__)'
 
 ENV CARTOPY_DATA_DIR=/usr/local/share/cartopy
@@ -35,49 +52,43 @@ RUN python -c 'import cartopy, cartopy.io.shapereader as shp; \
      for category, name in [("physical", "coastline"), ("cultural", "admin_0_boundary_lines_land")] \
      for scale in ["110m", "50m", "10m"]]'
 
-# The inference artifact (configs, statistics, grids, model description, see
-# artifact/README.md) comes from:
-# - "zenodo" (default): the published inference package ${PACKAGE_URL},
-#   checked against ${PACKAGE_MD5} (Zenodo record 23293148)
-# - "local": the assembled package directory ${LOCAL_ARTIFACT_DIR} in the
-#   build context
-# The model checkpoint is then downloaded (md5-checked) from Zenodo as given in
+# The inference artifact (configs, statistics, grids, graph, model
+# description) comes from:
+# - "release" (default): the artifact package zip ${PACKAGE_URL}, a release
+#   asset of this (private) repository, downloaded through the GitHub API
+#   with the token build secret, checked against ${PACKAGE_MD5}
+# - "local": the assembled artifact directory ${LOCAL_ARTIFACT_DIR} in the
+#   build context (with or without the checkpoint)
+# The model checkpoint is then downloaded (md5-checked) as given in
 # inference_artifact/configs/model.yaml, unless it's already there.
-# If Zenodo is unavailable, both downloads fall back to the copies in the
-# dmidk GitHub release artifact-anna-danra-2026-10-11 (same md5s).
-ARG ARTIFACT_SOURCE="zenodo"
-ARG PACKAGE_URL="https://zenodo.org/records/23293148/files/anna-danra-2026-10-11.zip?download=1"
-ARG PACKAGE_MD5="d453733a56c381d63922806cd4b25472"
-ARG PACKAGE_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-clara/releases/download/artifact-anna-danra-2026-10-11/anna-danra-2026-10-11.zip"
-ARG CHECKPOINT_MIRROR_URL="https://github.com/dmidk/mlwp-inference-container-clara/releases/download/artifact-anna-danra-2026-10-11/danra_model.ckpt"
+ARG ARTIFACT_SOURCE="release"
+ARG PACKAGE_URL=""
+ARG PACKAGE_MD5=""
 ARG LOCAL_ARTIFACT_DIR="artifact/build/.empty"
 # ${LOCAL_ARTIFACT_DIR} must exist in the build context: build_image.sh
-# creates an empty one for ARTIFACT_SOURCE=zenodo (so no local package ends
+# creates an empty one for ARTIFACT_SOURCE=release (so no local package ends
 # up in an image layer)
 COPY ${LOCAL_ARTIFACT_DIR}/ /workspace/inference_artifact_local/
-RUN if [ "$ARTIFACT_SOURCE" = "local" ] ; then \
+RUN --mount=type=secret,id=github_token,required=true \
+    if [ "$ARTIFACT_SOURCE" = "local" ] ; then \
         mv /workspace/inference_artifact_local /workspace/inference_artifact ; \
-    elif [ "$ARTIFACT_SOURCE" = "zenodo" ] ; then \
+    elif [ "$ARTIFACT_SOURCE" = "release" ] ; then \
         rm -rf /workspace/inference_artifact_local && \
         test -n "$PACKAGE_URL" && test -n "$PACKAGE_MD5" && \
-        for url in "$PACKAGE_URL" "$PACKAGE_MIRROR_URL" ; do \
-            [ -n "$url" ] || continue ; \
-            if curl -fL --connect-timeout 30 --retry 2 --retry-delay 10 --retry-all-errors \
-                    -o inference_artifact.zip "$url" && \
-                echo "$PACKAGE_MD5  inference_artifact.zip" | md5sum -c - ; then \
-                downloaded=1 ; break ; \
-            fi ; \
-            echo "download from $url failed, trying the next mirror" ; \
-        done && \
-        test -n "$downloaded" && \
+        curl -fL --retry 2 --retry-delay 10 \
+            -H "Authorization: Bearer $(cat /run/secrets/github_token)" \
+            -H "Accept: application/octet-stream" \
+            -o inference_artifact.zip "$PACKAGE_URL" && \
+        echo "$PACKAGE_MD5  inference_artifact.zip" | md5sum -c - && \
         mkdir -p /workspace/inference_artifact && \
         unzip inference_artifact.zip -d /workspace/inference_artifact && \
         rm inference_artifact.zip ; \
     else \
-        echo "unknown ARTIFACT_SOURCE=$ARTIFACT_SOURCE (local or zenodo)" && exit 1 ; \
+        echo "unknown ARTIFACT_SOURCE=$ARTIFACT_SOURCE (local or release)" && exit 1 ; \
     fi
-RUN python -m clara_inference.fetch_checkpoint /workspace/inference_artifact \
-        ${CHECKPOINT_MIRROR_URL:+--mirror-url "$CHECKPOINT_MIRROR_URL"}
+RUN --mount=type=secret,id=github_token,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token)" \
+    python -m clara_inference.fetch_checkpoint /workspace/inference_artifact
 # List files in the inference artifact directory for verification
 RUN ls -la /workspace/inference_artifact
 
