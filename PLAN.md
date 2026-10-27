@@ -104,9 +104,20 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - DANRA v0.5.0 is 3-hourly, float64, with time chunks of 256 steps (32 days). Without a cache, every block re-downloaded whole chunks.
   - With the cache, everything is downloaded once: about 540 GB for DANRA. WB2 ERA5 is one global chunk per time step, about 1 TB.
   - This machine has about 60 MB/s over WiFi, so expect hours.
-- [~] Full training-period stats run, in progress:
-  - DANRA from the ECMWF object store and WB2 ERA5 from GCS, 2016-01-01 → 2019-10-22.
-  - Logs: `artifact/build/stats-{interior,boundary}.log`.
+- [x] Which period were CLARA's stats computed over?
+  - The checkpoint's pickled boundary datastore contains its `stats_datastore` (`overlapping_era_400km_model1_config`). Its train split is **2016-01-01 → 2019-10-22**, its source is `era_danra_model1_subset.zarr`, and its zarr was created 2026-01-08.
+  - The paper's (and ANNA's) training period, 2000-01-01 → 2018-10-29, was used for pretraining only.
+  - mllam-data-prep computes statistics **before** domain cropping, so the ERA5 stats cover the whole ERA5 subset box (lat 79.25..32.75, lon −27..39.5), not the 400 km crop.
+- [x] The first full stats run was stopped. It had two problems:
+  - The ERA5 config read the global WB2 store with no subset box, so the stats would have been global.
+  - Five of the six DANRA workers ended immediately with an error that `pool.map` only reports at the end, probably a race on the shared chunk cache.
+- [x] Interim stats from ANNA's artifact (`dev-utils/stats_from_anna.py`):
+  - Same features, order, source box and method as CLARA's; only the period differs.
+  - Artifact `artifact/build/clara-anna-stats`, assembled with `--placeholder-stats`.
+- [?] Exact 2016–2019 stats:
+  - DANRA with `compute_stats`, after fixing the worker error and logging worker exceptions.
+  - ERA5 with ANNA's resumable `era5_boundary_stats`, which selects the subset box; about 1.9 TB of WB2 reads.
+  - Or accept ANNA's stats.
 - [x] `assemble`:
   - configs, stats datastores, graph from the training zip, DANRA grid from the object store
   - boundary grid derived from the graph's boundary nodes, with ERA5 statics from WB2
@@ -163,3 +174,8 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - Phase 0 commit `47cc2fe`. From the checkpoint: the IFS lead step is 6 h, and the stats are not recoverable.
   - Found the boundary point-order issue and the second-difference `diff_std`.
   - Pipeline runs end to end with placeholder stats; started the full stats runs.
+  - Found the stats period (2016–2019) in the checkpoint; stopped the stats runs (see Phase 1).
+  - E2E with ANNA's stats, 2026-10-26T06Z +18 h, 5 members:
+    - Sensible. Ensemble-mean RMSE against DINI at +18 h: t2m 0.76 K, mslp 0.71 hPa, 10 m wind 1.3–1.8 m/s, z500-ish 75 m²/s².
+    - Spread grows with lead time and is close to the RMSE.
+    - Point extremes outside physical ranges: `r` −0.48..2.35 and `swavr0m` down to −104 W/m².
