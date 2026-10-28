@@ -183,8 +183,16 @@ def assemble(
         ],
         check=True,
     )
-    model["checkpoint"]["md5"] = _md5(fp_ckpt)
-    model["checkpoint"]["url"] = checkpoint_url
+    md5 = _md5(fp_ckpt)
+    published_md5 = model["checkpoint"].get("md5")
+    if published_md5 is not None and published_md5 != md5:
+        raise ValueError(
+            f"the sanitized checkpoint's md5 {md5} differs from the published "
+            f"one in model.yaml ({published_md5}): another training checkpoint?"
+        )
+    model["checkpoint"]["md5"] = md5
+    if checkpoint_url is not None:
+        model["checkpoint"]["url"] = checkpoint_url
     _update_model_yaml(configs_dir / "model.yaml", model["checkpoint"])
 
     meta = dict(
@@ -272,7 +280,9 @@ def main():
         "(default: %(default)s)",
     )
     parser.add_argument(
-        "--checkpoint-url", help="where the checkpoint is published"
+        "--checkpoint-url",
+        help="where the checkpoint is published (default: the url in "
+        "artifact/configs/model.yaml)",
     )
     parser.add_argument(
         "--placeholder-stats",

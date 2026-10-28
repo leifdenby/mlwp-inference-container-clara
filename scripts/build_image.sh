@@ -54,8 +54,8 @@ printf '%s' "$GITHUB_TOKEN" > "$SECRET_FILE"
 # Where the inference artifact comes from (see Containerfile):
 # - "local" (default) uses an artifact directory LOCAL_ARTIFACT_DIR assembled
 #   with clara_inference.artifact.assemble (with or without the checkpoint)
-# - "release" downloads the artifact package zip (PACKAGE_URL: a GitHub API
-#   release asset URL, checked against PACKAGE_MD5)
+# - "release" downloads the artifact package zip (PACKAGE_URL, e.g. on Zenodo,
+#   checked against PACKAGE_MD5; the token is only sent to api.github.com)
 # The model checkpoint is downloaded during the build unless present (url
 # and md5 in the artifact's configs/model.yaml).
 ARTIFACT_SOURCE=${ARTIFACT_SOURCE:-local}

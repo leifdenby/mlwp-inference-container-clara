@@ -54,9 +54,9 @@ RUN python -c 'import cartopy, cartopy.io.shapereader as shp; \
 
 # The inference artifact (configs, statistics, grids, graph, model
 # description) comes from:
-# - "release" (default): the artifact package zip ${PACKAGE_URL}, a release
-#   asset of this (private) repository, downloaded through the GitHub API
-#   with the token build secret, checked against ${PACKAGE_MD5}
+# - "release" (default): the artifact package zip ${PACKAGE_URL} (e.g. on
+#   Zenodo), checked against ${PACKAGE_MD5}. The token build secret is only
+#   sent for a GitHub API release asset URL (https://api.github.com/...)
 # - "local": the assembled artifact directory ${LOCAL_ARTIFACT_DIR} in the
 #   build context (with or without the checkpoint)
 # The model checkpoint is then downloaded (md5-checked) as given in
@@ -75,10 +75,16 @@ RUN --mount=type=secret,id=github_token,required=true \
     elif [ "$ARTIFACT_SOURCE" = "release" ] ; then \
         rm -rf /workspace/inference_artifact_local && \
         test -n "$PACKAGE_URL" && test -n "$PACKAGE_MD5" && \
-        curl -fL --retry 2 --retry-delay 10 \
-            -H "Authorization: Bearer $(cat /run/secrets/github_token)" \
-            -H "Accept: application/octet-stream" \
-            -o inference_artifact.zip "$PACKAGE_URL" && \
+        case "$PACKAGE_URL" in \
+            https://api.github.com/*) \
+                curl -fL --retry 2 --retry-delay 10 \
+                    -H "Authorization: Bearer $(cat /run/secrets/github_token)" \
+                    -H "Accept: application/octet-stream" \
+                    -o inference_artifact.zip "$PACKAGE_URL" ;; \
+            *) \
+                curl -fL --retry 2 --retry-delay 10 \
+                    -o inference_artifact.zip "$PACKAGE_URL" ;; \
+        esac && \
         echo "$PACKAGE_MD5  inference_artifact.zip" | md5sum -c - && \
         mkdir -p /workspace/inference_artifact && \
         unzip inference_artifact.zip -d /workspace/inference_artifact && \

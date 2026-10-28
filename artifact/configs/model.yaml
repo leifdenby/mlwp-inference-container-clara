@@ -8,11 +8,15 @@
 # Containerfile and clara_inference.fetch_checkpoint.
 
 checkpoint:
-  # sanitized (clara_inference.artifact.sanitize_checkpoint) from
-  # CRPS_IFS_ALL_FINETUNE_AR12-train-crps-4x330-05_21_13-3613/last.ckpt:
-  # weights, args and config only. A release asset of the (private) GitHub
-  # repository, downloaded through the API with a GitHub token. `url` and
-  # `md5` are filled in by clara_inference.artifact.assemble
+  # sanitized (clara_inference.artifact.sanitize_checkpoint, deterministic)
+  # from CRPS_IFS_ALL_FINETUNE_AR12-train-crps-4x330-05_21_13-3613/last.ckpt:
+  # weights, args and config only. Published in its own Zenodo record
+  # (clara_inference.artifact.zenodo_draft --kind checkpoint), separate from
+  # the inference package, which refers to it. Filled in once the record
+  # exists; clara_inference.artifact.assemble checks that the checkpoint it
+  # sanitizes has this md5 (and fills in md5/url if they're null)
+  zenodo_record: null
+  doi: null
   url: null
   md5: null
   # where the checkpoint is put in the inference artifact directory

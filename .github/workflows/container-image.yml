@@ -3,11 +3,10 @@
 #
 # Needs (repository settings):
 # - secret REAL_PROB_LAM_TOKEN: a fine-grained token with read access to the
-#   contents of leifdenby/real-prob-lam (neural-lam) and of this repository
-#   (release assets: the inference package and checkpoint). Passed to the
-#   build as the `github_token` secret, never as a build arg
-# - variables PACKAGE_URL and PACKAGE_MD5: the inference package zip (a
-#   GitHub API release asset URL of this repository) and its md5
+#   contents of leifdenby/real-prob-lam (neural-lam). Passed to the build as
+#   the `github_token` secret, never as a build arg, and only sent to GitHub
+# - variables PACKAGE_URL and PACKAGE_MD5: the inference package zip (e.g.
+#   on Zenodo) and its md5
 # Without them the build is skipped.
 name: Build Container
 

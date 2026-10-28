@@ -5,10 +5,12 @@ Download the model checkpoint described in an inference artifact's
 Does nothing if the checkpoint is already there with the right md5. If the
 download fails, the mirrors are tried in order.
 
-The checkpoint of CLARA is a release asset of the private GitHub repository,
-so downloads from GitHub use the token in the GITHUB_TOKEN environment
-variable (in the container build: the `github_token` build secret). Private
-release assets are downloaded through the API, from
+The checkpoint of CLARA is published in its own Zenodo record (downloaded
+without credentials). Downloads from GitHub (e.g. a mirror as a release
+asset of a private repository) use the token in the GITHUB_TOKEN
+environment variable (in the container build: the `github_token` build
+secret), which is only sent to GitHub. Private release assets are
+downloaded through the API, from
 `https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`.
 
 Usage:

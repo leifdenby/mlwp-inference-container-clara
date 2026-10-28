@@ -123,7 +123,18 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
     - It reuses `SplitStats` (now saveable to arrays, with less overlap allowed at the split start).
     - Unit tests cover single-step first blocks, lost tails and single-step sub-blocks.
   - Both tools have `--dry-run [STEPS]`, partials and resume, and retries. The server commands are in the README.
-- [ ] The user runs both tools on their server and copies `stats/` back. Then assemble without `--placeholder-stats`, rerun the example forecast and the figures, and remove the interim-stats notes.
+- [~] The user runs both tools on their server (started 2026-10-28; DANRA with `--sub-block-steps 128`) and copies `stats/` back. Then:
+  - assemble without `--placeholder-stats`;
+  - rerun the example forecast and the figures;
+  - remove the interim-stats notes.
+- [x] Zenodo, as for ANNA: separate records for the checkpoint and the inference package.
+  - `zenodo_draft --kind {checkpoint,package}` creates drafts only.
+  - Creators are the paper authors, plus Leif Denby for the package.
+  - The licence is a placeholder (`cc-by-4.0`) until the authors decide.
+  - The package draft is refused with placeholder stats or without the checkpoint DOI.
+- [x] `model.yaml` carries `zenodo_record`, `doi`, `url` and `md5`. `assemble` checks the sanitized checkpoint's md5 against them; sanitizing is deterministic.
+- [ ] Draft the checkpoint record (the user's Zenodo token) and fill in `model.yaml`. Draft the package record after the exact stats. The drafts get reviewed before publishing.
+- [?] Making the repo and images public: agreed. Still open: whether `real-prob-lam` (neural-lam) goes public too, and the repo owner (`leifdenby` or `dmidk`).
 - [x] `assemble`:
   - configs, stats datastores, graph from the training zip, DANRA grid from the object store
   - boundary grid derived from the graph's boundary nodes, with ERA5 statics from WB2
@@ -186,3 +197,10 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
     - Sensible. Ensemble-mean RMSE against DINI at +18 h: t2m 0.76 K, mslp 0.71 hPa, 10 m wind 1.3–1.8 m/s, z500-ish 75 m²/s².
     - Spread grows with lead time and is close to the RMSE.
     - Point extremes outside physical ranges: `r` −0.48..2.35 and `swavr0m` down to −104 W/m².
+- 2026-10-28:
+  - Resumable stats tools for running on a server; the user started both runs.
+  - The `crps` model never applies `output_clamping` (`CRPS.predict_step` → `GraphUnet2.predict_step`), so out-of-range values are what the model was trained to produce.
+    - Added `--clip-to-physical-ranges`: post-processing of the outputs only, off by default.
+    - In the example, 31% of `swavr0m` values are negative (night, median −4 W/m²), and `r` > 1 at 5–12% of points at 400–925 hPa.
+  - Zenodo draft tool and the `model.yaml` checkpoint fields.
+  - The Containerfile only sends the GitHub token to `api.github.com`; before, it was sent to any `PACKAGE_URL`.

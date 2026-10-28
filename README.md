@@ -239,6 +239,28 @@ uv run python -m clara_inference.artifact.assemble \
 `assemble` derives the boundary grid from the graph's boundary nodes, and
 checks the artifact before finishing (`layout.check_artifact`).
 
+### Publishing on Zenodo
+
+As for ANNA, the model checkpoint and the inference package are **separate Zenodo records**. The package's `model.yaml` refers to the checkpoint by DOI, URL and md5. The image downloads both: the package from `PACKAGE_URL`, then the checkpoint from `model.yaml`.
+
+[`zenodo_draft`](src/clara_inference/artifact/zenodo_draft.py) creates or updates **drafts only**: it never publishes. You review the drafts, share them and publish them in the Zenodo web UI. The token, with scope `deposit:write`, is read from `--token-file` or from `ZENODO_TOKEN`.
+
+1. **Checkpoint.** Sanitizing is deterministic, so the checkpoint from any `assemble` run can be uploaded. Zenodo reserves its DOI with the draft, and the tool prints the `model.yaml` fields to fill in. After that, `assemble` checks that the checkpoint it sanitizes has the published md5.
+   ```bash
+   uv run python -m clara_inference.artifact.zenodo_draft --kind checkpoint \
+       --file artifact/build/clara-local/clara_model.ckpt --dry-run   # metadata only
+   uv run python -m clara_inference.artifact.zenodo_draft --kind checkpoint \
+       --file artifact/build/clara-local/clara_model.ckpt --token-file ~/.zenodo-token
+   ```
+2. **Package.** Assemble the artifact with the full training statistics and the filled-in `model.yaml`, then:
+   ```bash
+   uv run python -m clara_inference.artifact.zenodo_draft --kind package \
+       --file artifact/build/clara-local.zip --token-file ~/.zenodo-token
+   ```
+   The tool refuses a package with placeholder statistics, or one whose `model.yaml` has no checkpoint DOI. After publishing, it prints the `PACKAGE_URL` and `PACKAGE_MD5` for the image build.
+
+Rehearse either step on sandbox.zenodo.org with `--sandbox` and a sandbox token.
+
 ## Building the image
 
 ```bash
@@ -257,18 +279,19 @@ The image is tagged `mlwp-inference-container-clara:latest` (`IMAGE_NAME`).
   [scripts/container_pins.py](scripts/container_pins.py).
 - **`ARTIFACT_SOURCE=local`** (default) uses an assembled artifact directory,
   `LOCAL_ARTIFACT_DIR` (default `artifact/build/clara-local`).
-- **`ARTIFACT_SOURCE=release`** downloads the package zip, a release asset of
-  this repository: `PACKAGE_URL` is a GitHub API asset URL and is checked
-  against `PACKAGE_MD5`.
-- **Checkpoint.** It is downloaded with the token, md5-checked, from
-  `model.yaml`'s url, unless the artifact already has it.
+- **`ARTIFACT_SOURCE=release`** downloads the package zip from `PACKAGE_URL`
+  (e.g. its Zenodo record) and checks it against `PACKAGE_MD5`.
+- **Checkpoint.** It is downloaded and md5-checked from `model.yaml`'s url
+  (its Zenodo record), unless the artifact already has it.
+- **Token.** The GitHub token is only ever sent to GitHub: for
+  `real-prob-lam`, and for any `api.github.com` release asset URL.
 
 **CI** ([container-image.yml](.github/workflows/container-image.yml)) builds
 the x86_64 image on every push and pull request. `v*` tags also publish it as
 `ghcr.io/leifdenby/mlwp-inference-container-clara:<tag>` and `:latest`. It
 needs:
 - the repository secret `REAL_PROB_LAM_TOKEN`: a fine-grained token with read
-  access to the contents of `leifdenby/real-prob-lam` and of this repository;
+  access to the contents of `leifdenby/real-prob-lam` (neural-lam);
 - the variables `PACKAGE_URL` and `PACKAGE_MD5`.
 
 Without them, the build is skipped.
