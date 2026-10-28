@@ -187,7 +187,7 @@ How the tools run:
 - Both stream the split in blocks.
 - They save each finished block to `--partials-dir`, so rerunning the same command after an interruption picks up where it stopped.
 - They retry reads that fail on network errors.
-- `danra_stats` aligns its blocks with DANRA's 32-day time chunks, so each chunk is downloaded once. It downloads them into a temporary cache of about 100 GB under `--cache-dir`.
+- `danra_stats` aligns its blocks with DANRA's 32-day time chunks, so each chunk is downloaded once. It downloads them into a temporary cache under `--cache-dir`, about 12 GB per chunk (52 GB uncompressed).
 
 On test periods both match mllam-data-prep: ERA5 to within 1e-13 and DANRA to within 1e-8 of each feature's spread.
 
@@ -203,7 +203,7 @@ cd mlwp-inference-container-clara
 uv sync   # needs GitHub access to leifdenby/real-prob-lam (neural-lam)
 
 # check the setup first: a few time steps only, logs what the full run reads
-# (ERA5: ~2.8 GB; DANRA: one 32-day time chunk of every variable, see the log)
+# (ERA5: ~2.8 GB; DANRA: one 32-day time chunk of every variable, ~12 GB)
 uv run python -m clara_inference.artifact.era5_boundary_stats --dry-run \
     --output dry-run/overlapping_era_400km_model1_config.zarr \
     --partials-dir dry-run/partials-era5

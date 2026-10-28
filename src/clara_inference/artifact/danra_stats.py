@@ -12,7 +12,7 @@ few time steps at a time and the statistics combined exactly in float64.
 Reading and resuming:
 - DANRA is chunked in time by 256 steps (32 days), so the split is processed
   in blocks aligned to the time chunks: every chunk is downloaded once,
-  into a temporary local file cache (`--cache-dir`, ~100 GB for one block)
+  into a temporary local file cache (`--cache-dir`, ~12 GB for one block)
   that is deleted when the block is done. Within a block mllam-data-prep
   extracts `--sub-block-steps` steps at a time. Each extraction decompresses
   whole time chunks, so larger sub-blocks are faster (memory: ~2 GB per 8
