@@ -167,33 +167,67 @@ in the zip is [artifact/package-README.md](artifact/package-README.md).
 
 ### Training statistics
 
-**The normalisation statistics are not in the checkpoint.** neural-lam
-registers them as non-persistent buffers, and the training statistics only
-existed on the training cluster.
-[compute_stats](src/clara_inference/artifact/compute_stats.py) recomputes
-them from the public data over the training period:
-- **Interior:** DANRA v0.5.0 from the ECMWF object store.
-- **Boundary:** WeatherBench2 ERA5.
+**The normalisation statistics are not in the checkpoint.** neural-lam registers them as non-persistent buffers, and the training statistics only existed on the training cluster. They are recomputed from public data over CLARA's training split, **2016-01-01 → 2019-10-22**.
 
-It computes exactly what mllam-data-prep computes, block by block:
-- mean and std of the values;
-- mean of the **first** time differences;
-- std of the **second** time differences. This is what mllam-data-prep's
-  `calc_stats` really computes for `diff_std`.
+The period is recorded in the checkpoint's pickled copy of the ERA5 statistics datastore. It is not the paper's (and ANNA's) 2000-01-01 → 2018-10-29, which was used for pretraining only.
 
-On real data, the result matches mllam-data-prep to within 2.5e-8 of each
-feature's spread.
+Two tools compute the statistics exactly as mllam-data-prep does:
+- **mean and std** of the values;
+- **mean of the first** time differences;
+- **std of the second** time differences. This is what mllam-data-prep's `calc_stats` actually computes for `diff_std`.
 
-Statistics from only a few days are **unusable**. The day-of-year forcings
-then have a std close to 0, which puts their standardised values at about
-−1600σ, and the forecast diverges.
+| Tool | Datastore | Source | Reads |
+|---|---|---|---|
+| [`danra_stats`](src/clara_inference/artifact/danra_stats.py) | `danra_model1_config` (interior: state, forcing, static) | DANRA v0.5.0 on the ECMWF object store | ~540 GB |
+| [`era5_boundary_stats`](src/clara_inference/artifact/era5_boundary_stats.py) | `overlapping_era_400km_model1_config` (boundary: forcing, static) | WeatherBench2 ERA5 | ~1.9 TB |
+
+`era5_boundary_stats` is ported from ANNA's tool. mllam-data-prep computes the statistics **before** the domain cropping, so they cover the whole ERA5 subset box the training datastore was built from (`era_danra_model1_subset.zarr`, 187 × 267 points), not just the 400 km margin.
+
+How the tools run:
+- Both stream the split in blocks.
+- They save each finished block to `--partials-dir`, so rerunning the same command after an interruption picks up where it stopped.
+- They retry reads that fail on network errors.
+- `danra_stats` aligns its blocks with DANRA's 32-day time chunks, so each chunk is downloaded once. It downloads them into a temporary cache of about 100 GB under `--cache-dir`.
+
+On test periods both match mllam-data-prep: ERA5 to within 1e-13 and DANRA to within 1e-8 of each feature's spread.
+
+Statistics from only a few days are **unusable**. The day-of-year forcings then have a std close to 0, which puts their standardised values at about −1600σ, and the forecast diverges.
+
+#### Recomputing them on a machine with good bandwidth
+
+This takes hours even on a fast connection; a 60 MB/s link would need more than a day. The two runs are independent and can run at the same time.
+
+```bash
+git clone git@github.com:leifdenby/mlwp-inference-container-clara.git
+cd mlwp-inference-container-clara
+uv sync   # needs GitHub access to leifdenby/real-prob-lam (neural-lam)
+
+# check the setup first: a few time steps only, logs what the full run reads
+# (ERA5: ~2.8 GB; DANRA: one 32-day time chunk of every variable, see the log)
+uv run python -m clara_inference.artifact.era5_boundary_stats --dry-run \
+    --output dry-run/overlapping_era_400km_model1_config.zarr \
+    --partials-dir dry-run/partials-era5
+uv run python -m clara_inference.artifact.danra_stats --dry-run \
+    --output dry-run/danra_model1_config.zarr \
+    --partials-dir dry-run/partials-danra --cache-dir dry-run/cache
+
+# the full runs (rerun the same command to resume)
+uv run python -m clara_inference.artifact.era5_boundary_stats \
+    --output stats/overlapping_era_400km_model1_config.zarr \
+    --partials-dir partials-era5
+uv run python -m clara_inference.artifact.danra_stats \
+    --output stats/danra_model1_config.zarr \
+    --partials-dir partials-danra --cache-dir danra-cache
+```
+
+The resulting `stats/` directory is a few MB. Copy it back and pass it to `assemble --stats-dir` (below).
+
+Until the exact statistics are in, `dev-utils/stats_from_anna.py` makes interim ones from ANNA's artifact. They have the same features, source box and method, but ANNA's period.
 
 ### Building the artifact
 
 ```bash
-# the training statistics (reads ~1 TB per datastore; hours)
-uv run python -m clara_inference.artifact.compute_stats \
-    --configs artifact/configs --output-dir artifact/build/stats
+# artifact/build/stats: the two statistics zarrs (see above)
 # the artifact (DANRA grid from the object store, ERA5 statics from WB2)
 uv run python -m clara_inference.artifact.assemble \
     --output artifact/build/clara-local \

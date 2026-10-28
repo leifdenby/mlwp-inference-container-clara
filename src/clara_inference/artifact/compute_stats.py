@@ -31,9 +31,14 @@ extracted with mllam-data-prep block by block in time (blocks overlap by
 two time steps, for the differences), and the statistics of the blocks are
 combined exactly (Chan et al.'s parallel mean/variance), in float64.
 
-This reads ~1 TB per datastore, so it is run once, on a machine with good
-bandwidth; `--start`/`--end` restrict the period (e.g. for a quick,
-approximate run). The period is recorded in the zarr's attributes.
+For the full training split use the resumable tools instead (one process,
+partial results saved per block, retries on network errors):
+`danra_stats` (interior) and `era5_boundary_stats` (boundary). NB: the
+boundary config here reads the whole WB2 globe, while mllam-data-prep
+computed the statistics over the ERA5 subset box (before cropping), which
+`era5_boundary_stats` selects. This module provides the block statistics
+they use, and is for short periods (`--start`/`--end`, recorded in the
+zarr's attributes) and `--from-processed`.
 
 `--from-processed NAME=PATH` instead takes the statistics of a stats
 datastore from an existing processed datastore zarr with the same features
@@ -117,15 +122,20 @@ class SplitStats:
     first and std of the second time differences (see module docstring).
     """
 
-    def __init__(self, n_features, counted_until=None):
+    def __init__(self, n_features, counted_until=None, n_before=None):
         """
         `counted_until`: for a segment of a split, the last time counted by
-        the previous segment (the segments overlap by two times).
+        the previous segment (the segments overlap by two times, or by
+        `n_before` < 2 times if the split has only that many before it).
         """
         self.values = RunningStats(n_features)
         self.diff1 = RunningStats(n_features)
         self.diff2 = RunningStats(n_features)
         self.last_time = counted_until
+        if n_before is None:
+            n_before = 0 if counted_until is None else 2
+        # times of the split up to last_time, as far as the overlap needs
+        self.n_seen = n_before
 
     def merge(self, other):
         """Add the statistics of a following segment of the split."""
@@ -135,21 +145,47 @@ class SplitStats:
     def add_block(self, times, x):
         """
         `x`: (time, grid_index, feature) at `times`; blocks must overlap the
-        previous one by (at least) two times, which are not counted twice.
+        previous one by (at least) two times (fewer only at the start of the
+        split), which are not counted twice.
         """
         if self.last_time is None:
             n_old = 0
         else:
             n_old = int((times <= self.last_time).sum())
-            if n_old < 2:
+            if n_old < min(2, self.n_seen):
                 raise ValueError("blocks must overlap by two time steps")
+        self.n_seen += len(times) - n_old
         self.values.add(x[n_old:])
         d1 = np.diff(x, axis=0)
         # differences ending at a new time
-        self.diff1.add(d1[max(n_old - 1, 0):])
+        self.diff1.add(d1[max(n_old - 1, 0) :])
         d2 = np.diff(d1, axis=0)
-        self.diff2.add(d2[max(n_old - 2, 0):])
+        self.diff2.add(d2[max(n_old - 2, 0) :])
         self.last_time = times[-1]
+
+    PARTS = ["values", "diff1", "diff2"]
+
+    def to_arrays(self, prefix=""):
+        """The accumulators as arrays (e.g. to save with np.savez)."""
+        arrays = {}
+        for name in self.PARTS:
+            part = getattr(self, name)
+            arrays[f"{prefix}{name}_n"] = np.array(part.n)
+            arrays[f"{prefix}{name}_mean"] = part.mean
+            arrays[f"{prefix}{name}_m2"] = part.m2
+        return arrays
+
+    @classmethod
+    def from_arrays(cls, arrays, prefix=""):
+        """A SplitStats from the arrays of `to_arrays`."""
+        n_features = arrays[f"{prefix}values_mean"].size
+        stats = cls(n_features)
+        for name in cls.PARTS:
+            part = getattr(stats, name)
+            part.n = int(arrays[f"{prefix}{name}_n"])
+            part.mean = np.array(arrays[f"{prefix}{name}_mean"], dtype="f8")
+            part.m2 = np.array(arrays[f"{prefix}{name}_m2"], dtype="f8")
+        return stats
 
     def result(self):
         return dict(
@@ -169,7 +205,8 @@ def _light_interior_config(fp_interior_config, tmpdir):
     config = mdp.Config.from_yaml_file(fp_interior_config)
     start = config.output.splitting.splits["train"].start
     end = (
-        datetime.datetime.fromisoformat(str(start)) + datetime.timedelta(days=1)
+        datetime.datetime.fromisoformat(str(start))
+        + datetime.timedelta(days=1)
     ).isoformat()
     config.output.coord_ranges["time"].start = str(start)
     config.output.coord_ranges["time"].end = end
@@ -334,7 +371,8 @@ def compute_stats(
         results = [_compute_segment(*args[0])]
     else:
         with ProcessPoolExecutor(
-            max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
         ) as pool:
             results = list(pool.map(_compute_segment, *zip(*args)))
 
@@ -342,7 +380,14 @@ def compute_stats(
     for seg_stats, _ in results[1:]:
         for category, (split_stats, _) in seg_stats.items():
             stats[category][0].merge(split_stats)
+    return stats_dataset(stats, static, start, end, step)
 
+
+def stats_dataset(stats, static, start, end, step, description=None):
+    """
+    The stats-only zarr content: `stats` maps category to (SplitStats,
+    feature coordinate), `static` is the static variable (or None).
+    """
     data_vars = {}
     for category, (split_stats, features) in stats.items():
         for op, values in split_stats.result().items():
@@ -367,7 +412,8 @@ def compute_stats(
     ds.attrs.update(
         statistics_period=f"{period[0]} .. {period[1]}",
         statistics_step=isodate.duration_isoformat(step),
-        description=(
+        description=description
+        or (
             "training statistics recomputed with "
             "clara_inference.artifact.compute_stats (as mllam-data-prep)"
         ),

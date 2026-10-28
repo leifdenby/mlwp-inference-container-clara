@@ -114,10 +114,16 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - [x] Interim stats from ANNA's artifact (`dev-utils/stats_from_anna.py`):
   - Same features, order, source box and method as CLARA's; only the period differs.
   - Artifact `artifact/build/clara-anna-stats`, assembled with `--placeholder-stats`.
-- [?] Exact 2016–2019 stats:
-  - DANRA with `compute_stats`, after fixing the worker error and logging worker exceptions.
-  - ERA5 with ANNA's resumable `era5_boundary_stats`, which selects the subset box; about 1.9 TB of WB2 reads.
-  - Or accept ANNA's stats.
+- [x] Resumable tools for the exact 2016–2019 stats, to run on a server with good bandwidth (as for ANNA's ERA5 stats):
+  - `era5_boundary_stats`, ported from ANNA. It selects the subset box and reads about 1.9 TB.
+    - Validated against mllam-data-prep on 8 steps, from a local copy of the box: within 1e-13.
+  - `danra_stats` reads about 540 GB.
+    - Blocks are aligned to DANRA's 32-day time chunks and each block gets a temporary cache.
+    - Each block saves its last two steps to disk for the differences across the block boundary.
+    - It reuses `SplitStats` (now saveable to arrays, with less overlap allowed at the split start).
+    - Unit tests cover single-step first blocks, lost tails and single-step sub-blocks.
+  - Both tools have `--dry-run [STEPS]`, partials and resume, and retries. The server commands are in the README.
+- [ ] The user runs both tools on their server and copies `stats/` back. Then assemble without `--placeholder-stats`, rerun the example forecast and the figures, and remove the interim-stats notes.
 - [x] `assemble`:
   - configs, stats datastores, graph from the training zip, DANRA grid from the object store
   - boundary grid derived from the graph's boundary nodes, with ERA5 statics from WB2
