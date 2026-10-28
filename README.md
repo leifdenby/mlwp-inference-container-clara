@@ -115,7 +115,7 @@ The forecast: analysis 2026-10-26T06Z, +18 h, 5 members, run on a DGX Spark.
 
 > **Interim statistics.** This forecast was normalised with the statistics from ANNA's artifact (`dev-utils/stats_from_anna.py`). They have the same features and are computed the same way, but over ANNA's training period (2000-01-01 → 2018-10-29). CLARA's own were computed over 2016-01-01 → 2019-10-22, as recorded in the checkpoint.
 >
-> A few grid points have values outside physical ranges: relative humidity from −0.48 to 2.35, and night-time shortwave down to −104 W/m².
+> The figures show the model's unclipped outputs. Relative humidity and night-time short-wave radiation are partly outside their physical ranges, as the model doesn't constrain them; see [Post-processing](#post-processing-off-by-default).
 
 ![CLARA ensemble mean and spread of t2m, and DINI's t2m, at +18 h](docs/clara_example_t2m_mslp.png)
 
@@ -292,7 +292,9 @@ subprocess:
 3. **`neural_lam.train_model --eval test`:** runs the ensemble forecast with
    strict checkpoint loading.
 4. **`clara_inference.convert_output`:** writes DANRA-like output datasets
-   with an `ensemble_member` dimension.
+   with an `ensemble_member` dimension. Optionally it also clips two
+   variables to their physical ranges. That is post-processing, off by
+   default; see below.
 5. **`clara_inference.upload_outputs`:** optionally uploads to S3.
 
 A 5-member forecast of 18 h runs the model in about 2 minutes on a DGX Spark
@@ -306,6 +308,25 @@ uv run python -m clara_inference --artifact-path artifact/build/clara-local \
 CONTAINER_APP=docker CLARA_IFS_BOUNDARY_PATH=dev-data/ifs/2026-10-26T000000Z/ifs.zarr \
     scripts/run_inference_container.sh 2026-10-26T06:00Z PT18H
 ```
+
+### Post-processing (off by default)
+
+CLARA's outputs are, by default, **exactly what the model predicts**.
+
+The model doesn't constrain any variable to a physical range. The training config has an `output_clamping` section, but the `crps` model doesn't apply it, neither in training nor here. So the outputs can go out of range. In the example forecast below (5 members, +6 h to +18 h):
+- **Net surface short-wave radiation `swavr0m`** is slightly negative at night at 31% of the values. The median of those is −4 W/m²; 0.5% go below −20 W/m², and the lowest is −104 W/m².
+- **Relative humidity `r`** is above 1 at 5–12% of the points at 400–925 hPa, mostly by less than 0.05 (saturated air). It is below 0 at up to 3% (600 hPa). The extremes are −0.48 and 2.35.
+
+`--clip-to-physical-ranges` (`CLARA_CLIP_TO_PHYSICAL_RANGES=true`) clips:
+- `r` to [0, 1];
+- `swavr0m` to ≥ 0.
+
+This is **post-processing, applied after the model has made its predictions**:
+- It only changes the output datasets (`outputs/single_levels.zarr`, `outputs/pressure_levels.zarr`).
+- It doesn't change the forecast itself. The model's autoregressive steps use the unclipped values.
+- neural-lam's raw prediction (`outputs/prediction.zarr`) stays unclipped.
+
+When enabled, the outputs' `postprocessing` attribute records what was clipped.
 
 **S3 access.** S3 inputs are read with the usual AWS configuration. Without
 any AWS credentials they are read anonymously, which works for DINI's public
@@ -328,6 +349,7 @@ variable, which wins over the default. This is the same convention as ANNA
 | `--workdir` | `CLARA_WORKDIR` | `inference_workdir` | working directory; outputs go in `outputs/` |
 | `--artifact-path` | `CLARA_ARTIFACT_PATH` | `inference_artifact` | the inference artifact, including the checkpoint |
 | `--skip-completed` | `CLARA_SKIP_COMPLETED` | `false` | skip the stages already completed in the workdir |
+| `--clip-to-physical-ranges` | `CLARA_CLIP_TO_PHYSICAL_RANGES` | `false` | **post-processing**, after the model's predictions: clip `r` to [0, 1] and `swavr0m` to ≥ 0 in the outputs (see [Post-processing](#post-processing-off-by-default)) |
 | `--output-s3-prefix` | `CLARA_OUTPUT_S3_PREFIX` | | also upload the outputs to `{prefix}/<analysis time>/`, replacing an earlier upload for that analysis time |
 | `--input-s3-endpoint-url` | `CLARA_INPUT_S3_ENDPOINT_URL` | (AWS config) | S3 endpoint for reading DINI and IFS |
 | `--input-aws-profile` | `CLARA_INPUT_AWS_PROFILE` | (AWS config) | AWS profile for reading DINI and IFS |

@@ -72,3 +72,30 @@ def test_convert_members(n_members):
     )
     assert ds_sl.t2m.attrs["units"] == "K"
     assert ds_pl.r.attrs["units"] == "1"
+
+
+@pytest.mark.parametrize("clip", [False, True])
+def test_clip_to_physical_ranges_only_if_asked(clip):
+    """Feature values are 0..N-1 (+1000 per member): r and swavr0m > range"""
+    ds_pred, _ = _prediction(2)
+    # negative values too (swavr0m is feature 6)
+    ds_pred["state"] = ds_pred.state - 10.0
+    ds_sl, ds_pl = co.convert(
+        ds_pred, _grid(), np.datetime64("2026-10-26T06:00"), {"a": 1}, clip=clip
+    )
+    unclipped_sl, unclipped_pl = co.convert(
+        ds_pred, _grid(), np.datetime64("2026-10-26T06:00"), {"a": 1}
+    )
+    if clip:
+        assert float(ds_pl.r.min()) >= 0 and float(ds_pl.r.max()) <= 1
+        assert float(ds_sl.swavr0m.min()) >= 0
+        assert "r clipped to [0.0, 1.0]" in ds_pl.attrs["postprocessing"]
+        assert "swavr0m clipped to [0.0, inf]" in ds_sl.attrs["postprocessing"]
+        assert ds_pl.r.attrs["units"] == "1"
+    else:
+        assert float(ds_pl.r.max()) > 1 and float(ds_sl.swavr0m.min()) < 0
+        assert "postprocessing" not in ds_sl.attrs
+        assert "postprocessing" not in ds_pl.attrs
+    # other variables are never changed
+    np.testing.assert_array_equal(ds_sl.t2m.values, unclipped_sl.t2m.values)
+    np.testing.assert_array_equal(ds_pl.t.values, unclipped_pl.t.values)

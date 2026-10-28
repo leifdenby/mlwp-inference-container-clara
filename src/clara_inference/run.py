@@ -159,6 +159,14 @@ def build_parser():
         "and IFS boundary as the completed run",
     )
     parser.add_argument(
+        "--clip-to-physical-ranges",
+        action="store_true",
+        help="post-processing of the outputs, after the model's predictions "
+        "(the forecast itself is unaffected): clip relative humidity r to "
+        "[0, 1] and net surface short-wave radiation swavr0m to >= 0, which "
+        "the model doesn't constrain (default: off)",
+    )
+    parser.add_argument(
         "--output-s3-prefix",
         help="also upload the outputs to {prefix}/{analysis time}/ (e.g. "
         "s3://clara-forecasts/2026-10-01T060000Z/), replacing an earlier "
@@ -445,7 +453,12 @@ class Forecast:
                 self.analysis_iso,
                 "--output-dir",
                 self.workdir / "outputs",
-            ],
+            ]
+            + (
+                ["--clip-to-physical-ranges"]
+                if self.args.clip_to_physical_ranges
+                else []
+            ),
         )
 
     def upload(self):

@@ -77,6 +77,16 @@ NOTES = {
     "tw": "geometric vertical velocity",
 }
 GRID_MAPPING = "danra_projection"
+# optional post-processing (`--clip-to-physical-ranges`, off by default):
+# CRPS-LAM doesn't constrain its outputs (the `output_clamping` of the
+# training config isn't applied by the `crps` model), so a few grid points
+# can be outside the physical range. (lower, upper) per variable, None for
+# no limit. Applied to the output datasets only, after the model's
+# predictions, so it never affects the forecast itself
+PHYSICAL_RANGES = {
+    "r": (0.0, 1.0),
+    "swavr0m": (0.0, None),
+}
 
 
 MEMBER_DIM = "ensemble_member"
@@ -107,8 +117,36 @@ def projection_cf_attrs(interior_config):
     }
 
 
-def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
-    """Split the predicted state features into single/pressure level datasets."""
+def clip_to_physical_ranges(ds):
+    """
+    `ds` with the variables of PHYSICAL_RANGES clipped to their range, and
+    the clipping recorded in the `postprocessing` attribute.
+    """
+    clipped = []
+    for v, (lower, upper) in PHYSICAL_RANGES.items():
+        if v not in ds:
+            continue
+        attrs = ds[v].attrs
+        ds[v] = ds[v].clip(min=lower, max=upper)
+        ds[v].attrs = attrs
+        clipped.append(
+            f"{v} clipped to [{'-inf' if lower is None else lower}, "
+            f"{'inf' if upper is None else upper}]"
+        )
+    if clipped:
+        ds.attrs["postprocessing"] = (
+            "; ".join(clipped) + " after the model's predictions"
+        )
+    return ds
+
+
+def convert(
+    ds_pred, ds_grid, analysis_time, projection_attrs, clip=False
+):
+    """
+    Split the predicted state features into single/pressure level datasets,
+    clipping the variables of PHYSICAL_RANGES if `clip`.
+    """
     if ds_pred.start_time.size != 1:
         raise ValueError(
             f"expected a single forecast, got {ds_pred.start_time.size} start times"
@@ -185,7 +223,7 @@ def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
         )
 
     for ds in [ds_sl, ds_pl]:
-        ds.attrs = attrs
+        ds.attrs = dict(attrs)
         for v in ds.data_vars:
             ds[v].attrs["units"] = UNITS[v]
             ds[v].attrs["grid_mapping"] = GRID_MAPPING
@@ -197,6 +235,10 @@ def convert(ds_pred, ds_grid, analysis_time, projection_attrs):
         ds[GRID_MAPPING] = xr.DataArray(0, attrs=projection_attrs)
         # time units as in the DINI zarrs
         ds.time.encoding["units"] = "seconds since 1970-01-01"
+    if clip:
+        ds_sl, ds_pl = clip_to_physical_ranges(ds_sl), clip_to_physical_ranges(
+            ds_pl
+        )
     return ds_sl, ds_pl
 
 
@@ -215,6 +257,13 @@ def main():
     )
     parser.add_argument("--analysis-time", required=True, type=np.datetime64)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--clip-to-physical-ranges",
+        action="store_true",
+        help="post-processing: clip "
+        + ", ".join(PHYSICAL_RANGES)
+        + " to their physical ranges in the outputs",
+    )
     args = parser.parse_args()
 
     ds_pred = xr.open_zarr(args.prediction)
@@ -224,6 +273,7 @@ def main():
         ds_grid,
         args.analysis_time,
         projection_cf_attrs(args.interior_config),
+        clip=args.clip_to_physical_ranges,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name, ds in [("single_levels", ds_sl), ("pressure_levels", ds_pl)]:
