@@ -321,7 +321,8 @@ subprocess:
 5. **`clara_inference.upload_outputs`:** optionally uploads to S3.
 
 A 5-member forecast of 18 h runs the model in about 2 minutes on a DGX Spark
-(GB10).
+(GB10). The whole run in the container takes about 7.5 minutes, most of it
+regridding DINI, i.e. downloading it from S3.
 
 ```bash
 uv run python -m clara_inference --artifact-path artifact/build/clara-local \

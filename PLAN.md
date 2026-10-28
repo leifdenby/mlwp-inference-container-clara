@@ -169,7 +169,12 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - artifact from `local` or `release`
 - [x] `scripts/build_image.sh` (token from `gh auth token`), `scripts/run_inference_container.sh`.
 - [x] CI: pytest and container build/publish with the `REAL_PROB_LAM_TOKEN` secret and `PACKAGE_URL`/`PACKAGE_MD5` variables.
-- [ ] Build the image locally and run a forecast in it.
+- [x] Build the image locally and run a forecast in it (2026-10-28, docker on the DGX Spark, interim artifact).
+  - 2026-10-26T06Z +18 h, 5 members: 7 min 21 s in total.
+    - Regridding DINI: 4 min 40 s, mostly the S3 download.
+    - Datastores: 9 s. Forecast: 2 min 5 s. Conversion: 25 s.
+  - Scores as in the uv run (other random members): t2m RMSE at +18 h 0.82 K, mslp 0.79 hPa.
+  - The GB10's unified memory means `nvidia-smi` doesn't report GPU memory.
 - [x] Example forecast figures in the README (`dev-utils/plot_example_forecast.py` → `docs/clara_example_*.png`), from the run with ANNA's stats.
 
 ## Phase 3: tests (CPU)
@@ -183,7 +188,7 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - [x] The sanitized checkpoint loads with strict loading: 1,397 parameters, 0 missing, 0 mismatched.
 - [x] End-to-end mechanics on the DGX Spark: 2026-10-26T06Z +18 h, 5 members, about 2.5 min for forecast and conversion; the boundary order check passed.
 - [ ] End-to-end with the real stats: no NaNs, plausible values, spread > 0 and growing, RMSE against DINI of the size of short-range forecast differences. The placeholder-stats run diverges, as expected.
-- [ ] Image build and container run.
+- [x] Image build and container run (see Phase 2).
 
 ## Log
 
