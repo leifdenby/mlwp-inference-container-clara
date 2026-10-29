@@ -134,11 +134,17 @@ def _extract(config, start, end, max_retries):
     start..end, with their times and feature coordinates, extracted with
     mllam-data-prep, retrying with backoff on errors.
     """
+    block_config = _block_config(config, _py(start), _py(end))
+    # one chunk per feature over all the times and grid points: aligned with
+    # DANRA's chunks (whole time chunks of one variable and level), unlike
+    # the config's output chunking (one time step, 20 features), whose
+    # rechunking keeps many decoded source chunks in memory and copies in
+    # many small, mostly single-threaded, pieces. (The values don't depend
+    # on the chunking)
+    block_config.output.chunking = {f"{c}_feature": 1 for c in CATEGORIES}
     for attempt in range(max_retries + 1):
         try:
-            ds = mdp.create_dataset(
-                config=_block_config(config, _py(start), _py(end))
-            )
+            ds = mdp.create_dataset(config=block_config)
             dim = config.output.splitting.dim
             return {
                 category: (
@@ -193,7 +199,9 @@ def _process_block(
         )
         extracted = _extract(config, sub_start, sub_end, max_retries)
         new_carry = {}
-        for category, (times, x, feature) in extracted.items():
+        while extracted:
+            # (popped, so the values are freed once concatenated)
+            category, (times, x, feature) = extracted.popitem()
             if category not in stats:
                 if carry is not None:
                     n_before = len(carry[category][0])
@@ -210,7 +218,8 @@ def _process_block(
                 times = np.concatenate([carry[category][0], times])
                 x = np.concatenate([carry[category][1], x])
             stats[category].add_block(times, x)
-            new_carry[category] = (times[-2:], x[-2:])
+            # (copies: views would keep all of x in memory)
+            new_carry[category] = (times[-2:].copy(), x[-2:].copy())
         carry = new_carry
         sub_start = sub_end + step
     return stats, features, carry

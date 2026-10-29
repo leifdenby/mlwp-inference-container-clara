@@ -92,11 +92,14 @@ class RunningStats:
 
     def add(self, values):
         """`values`: (..., n_features); all but the last axis reduced."""
-        x = values.reshape(-1, values.shape[-1]).astype("f8")
+        x = values.reshape(-1, values.shape[-1]).astype("f8", copy=False)
         if x.shape[0] == 0:
             return
         mean_b = x.mean(axis=0)
-        self._combine(x.shape[0], mean_b, ((x - mean_b) ** 2).sum(axis=0))
+        # (one temporary copy of the values, not two)
+        deviation = x - mean_b
+        np.square(deviation, out=deviation)
+        self._combine(x.shape[0], mean_b, deviation.sum(axis=0))
 
     def merge(self, other):
         """Add the values summarised by another RunningStats."""
@@ -160,6 +163,7 @@ class SplitStats:
         # differences ending at a new time
         self.diff1.add(d1[max(n_old - 1, 0) :])
         d2 = np.diff(d1, axis=0)
+        del d1
         self.diff2.add(d2[max(n_old - 2, 0) :])
         self.last_time = times[-1]
 
