@@ -21,7 +21,8 @@ Reading and resuming:
   with its last two time steps, which the next block needs for the first
   and second differences across the block boundary (so it doesn't have to
   download the previous chunk again). Re-running the same command skips
-  finished blocks
+  finished blocks (`--sub-block-steps` may be changed when resuming, e.g.
+  lowered after running out of memory)
 - extracting is retried with backoff (`--max-retries`) on network errors
 
 About 540 GB is read for the whole split. The output has the layout of
@@ -323,7 +324,13 @@ def main():
     )
     fp_run_info = args.partials_dir / "run_info.json"
     if fp_run_info.exists():
-        if json.loads(fp_run_info.read_text()) != run_info:
+        # the sub-block size doesn't change the results (only memory and
+        # speed), so a resumed run may use another one
+        previous = json.loads(fp_run_info.read_text())
+        previous.pop("sub_block_steps", None)
+        if previous != {
+            k: v for k, v in run_info.items() if k != "sub_block_steps"
+        }:
             raise ValueError(
                 f"{args.partials_dir} contains partials from a run with other "
                 "arguments, use a new --partials-dir"
