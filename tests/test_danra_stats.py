@@ -89,6 +89,9 @@ inputs:
     path: {path}
     dims: [time, x, y]
     derived_variables:
+      toa_radiation:
+        kwargs: {{time: ds_input.time, lat: ds_input.lat, lon: ds_input.lon}}
+        function: mllam_data_prep.ops.derive_variable.physical_field.calculate_toa_radiation
       hour_of_day_sin:
         kwargs: {{time: ds_input.time, component: sin}}
         function: mllam_data_prep.ops.derive_variable.time_components.calculate_hour_of_day
@@ -115,7 +118,12 @@ def test_extract_matches_the_config_chunking(tmp_path):
     times = SOURCE_TIMES[:48]
     shape = (times.size, 4, 6)
     coords = dict(
-        time=times, x=np.arange(4.0), y=np.arange(6.0), pressure=[500, 850]
+        time=times,
+        x=np.arange(4.0),
+        y=np.arange(6.0),
+        pressure=[500, 850],
+        lat=(("x", "y"), 50 + rng.uniform(size=(4, 6))),
+        lon=(("x", "y"), 10 + rng.uniform(size=(4, 6))),
     )
     source = xr.Dataset(
         {
@@ -134,6 +142,11 @@ def test_extract_matches_the_config_chunking(tmp_path):
     config = mdp.Config.from_yaml_file(fp_config)
 
     start, end = times[5], times[30]
+    # the derived forcings are chunked in time as the output (over all the
+    # source's times), so the time chunk must be bounded
+    assert danra_stats._extract_config(config, start, end).output.chunking[
+        "time"
+    ] == (30 - 5 + 1)
     extracted = danra_stats._extract(config, start, end, 0)
     expected = mdp.create_dataset(
         config=_block_config(

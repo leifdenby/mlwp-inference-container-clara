@@ -128,20 +128,36 @@ def _time_chunking(config):
     return times, chunk_steps.pop(), nbytes
 
 
+def _extract_config(config, start, end):
+    """
+    `config` restricted to start..end, with one chunk per feature over all
+    the times and grid points: aligned with DANRA's chunks (whole time
+    chunks of one variable and level), unlike the config's output chunking
+    (one time step, 20 features), whose rechunking keeps many decoded source
+    chunks in memory and copies in many small, mostly single-threaded,
+    pieces. (The values don't depend on the chunking.)
+
+    The time chunk must still be set: mllam-data-prep derives variables
+    (the forcings) over all the source's times before selecting start..end,
+    chunked in time as the output (the whole time axis would be one chunk)
+    """
+    block_config = _block_config(config, _py(start), _py(end))
+    dim = config.output.splitting.dim
+    n_steps = int((end - start) / pd.Timedelta(_step(config))) + 1
+    block_config.output.chunking = {
+        dim: n_steps,
+        **{f"{c}_feature": 1 for c in CATEGORIES},
+    }
+    return block_config
+
+
 def _extract(config, start, end, max_retries):
     """
     The state and forcing values ((time, grid_index, feature) float64) of
     start..end, with their times and feature coordinates, extracted with
     mllam-data-prep, retrying with backoff on errors.
     """
-    block_config = _block_config(config, _py(start), _py(end))
-    # one chunk per feature over all the times and grid points: aligned with
-    # DANRA's chunks (whole time chunks of one variable and level), unlike
-    # the config's output chunking (one time step, 20 features), whose
-    # rechunking keeps many decoded source chunks in memory and copies in
-    # many small, mostly single-threaded, pieces. (The values don't depend
-    # on the chunking)
-    block_config.output.chunking = {f"{c}_feature": 1 for c in CATEGORIES}
+    block_config = _extract_config(config, start, end)
     for attempt in range(max_retries + 1):
         try:
             ds = mdp.create_dataset(config=block_config)
@@ -155,6 +171,8 @@ def _extract(config, start, end, max_retries):
                 for category in CATEGORIES
                 if category in ds
             }
+        except MemoryError:
+            raise  # not transient
         except Exception as ex:  # network errors come in many types
             if attempt == max_retries:
                 raise
