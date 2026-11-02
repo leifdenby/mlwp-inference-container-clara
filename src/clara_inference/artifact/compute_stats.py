@@ -83,10 +83,13 @@ class RunningStats:
     """
     Per-feature count, mean and sum of squared deviations (M2) over all
     values added, combined exactly between batches (Chan et al. 1979).
+    NaNs are skipped, as xarray's mean/std (which mllam-data-prep uses) do
+    by default: DANRA's radiation fields (lwavr0m, swavr0m) have missing
+    values. The counts are therefore per feature.
     """
 
     def __init__(self, n_features):
-        self.n = 0
+        self.n = np.zeros(n_features, dtype="i8")
         self.mean = np.zeros(n_features)
         self.m2 = np.zeros(n_features)
 
@@ -95,22 +98,39 @@ class RunningStats:
         x = values.reshape(-1, values.shape[-1]).astype("f8", copy=False)
         if x.shape[0] == 0:
             return
-        mean_b = x.mean(axis=0)
-        # (one temporary copy of the values, not two)
-        deviation = x - mean_b
-        np.square(deviation, out=deviation)
-        self._combine(x.shape[0], mean_b, deviation.sum(axis=0))
+        n_b = x.shape[0] - np.isnan(x).sum(axis=0)
+        if (n_b == x.shape[0]).all():
+            mean_b = x.mean(axis=0)
+            # (one temporary copy of the values, not two)
+            deviation = x - mean_b
+            np.square(deviation, out=deviation)
+            m2_b = deviation.sum(axis=0)
+        else:
+            with np.errstate(invalid="ignore", divide="ignore"):
+                mean_b = np.nansum(x, axis=0) / n_b
+            deviation = x - mean_b
+            np.square(deviation, out=deviation)
+            m2_b = np.nansum(deviation, axis=0)
+        self._combine(n_b, mean_b, m2_b)
 
     def merge(self, other):
         """Add the values summarised by another RunningStats."""
-        if other.n:
-            self._combine(other.n, other.mean, other.m2)
+        self._combine(other.n, other.mean, other.m2)
 
     def _combine(self, n_b, mean_b, m2_b):
         n = self.n + n_b
-        delta = mean_b - self.mean
-        self.mean = self.mean + delta * n_b / n
-        self.m2 = self.m2 + m2_b + delta**2 * self.n * n_b / n
+        # features without values (yet) in either keep the other's
+        some = n > 0
+        safe_n = np.where(some, n, 1)
+        delta = np.where(n_b > 0, mean_b, 0.0) - self.mean
+        self.mean = np.where(some, self.mean + delta * n_b / safe_n, 0.0)
+        self.m2 = np.where(
+            some,
+            self.m2
+            + np.where(n_b > 0, m2_b, 0.0)
+            + delta**2 * self.n * n_b / safe_n,
+            0.0,
+        )
         self.n = n
 
     @property
@@ -186,7 +206,11 @@ class SplitStats:
         stats = cls(n_features)
         for name in cls.PARTS:
             part = getattr(stats, name)
-            part.n = int(arrays[f"{prefix}{name}_n"])
+            # (a scalar count in partials from before NaNs were skipped)
+            part.n = np.broadcast_to(
+                np.asarray(arrays[f"{prefix}{name}_n"], dtype="i8"),
+                (n_features,),
+            ).copy()
             part.mean = np.array(arrays[f"{prefix}{name}_mean"], dtype="f8")
             part.m2 = np.array(arrays[f"{prefix}{name}_m2"], dtype="f8")
         return stats

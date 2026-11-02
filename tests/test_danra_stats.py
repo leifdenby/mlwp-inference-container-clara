@@ -180,6 +180,70 @@ def synthetic_source(monkeypatch):
 
 
 @pytest.mark.parametrize("sub_block_steps", [1, 3, 8])
+@pytest.mark.parametrize("lose_tail", [None, 2])
+def test_nans_skipped_as_mllam_data_prep(
+    synthetic_source, sub_block_steps, lose_tail
+):
+    """
+    With missing values (as in DANRA's radiation fields), as
+    mllam-data-prep's calc_stats: xarray's NaN-skipping mean/std of the
+    values and of the first/second differences
+    """
+    x = synthetic_source
+    # NaNs in feature b only: single points and whole time steps
+    x[[4, 9, 17], 2, 1] = np.nan
+    x[[12, 25, 26], :, 1] = np.nan
+    i_start, i_end = 3, 40
+    da = xr.DataArray(
+        x[i_start : i_end + 1], dims=["time", "grid_index", "feature"]
+    )
+    dims = ["time", "grid_index"]
+    expected = dict(
+        mean=da.mean(dims),
+        std=da.std(dims),
+        diff_mean=da.diff("time").mean(dims),
+        diff_std=da.diff("time").diff("time").std(dims),
+    )
+
+    split_start = SOURCE_TIMES[i_start]
+    blocks = danra_stats.chunk_blocks(
+        SOURCE_TIMES, 8, split_start, SOURCE_TIMES[i_end]
+    )
+    combined, tail = None, None
+    for k, (first, last) in enumerate(blocks):
+        if k == lose_tail:
+            tail = None
+        stats, _, tail = danra_stats._process_block(
+            None, first, last, STEP, sub_block_steps, tail, split_start, 0
+        )
+        # (through the saved partials, as the full run)
+        block = SplitStats.from_arrays(stats["state"].to_arrays())
+        if combined is None:
+            combined = block
+        else:
+            combined.merge(block)
+    for op, values in expected.items():
+        np.testing.assert_allclose(
+            combined.result()[op], values, rtol=1e-10, err_msg=op
+        )
+
+
+def test_partials_with_scalar_counts_load():
+    """Partials saved before NaNs were skipped had one count per part"""
+    rng = np.random.default_rng(6)
+    stats = SplitStats(3)
+    stats.add_block(np.arange(10), rng.normal(size=(10, 4, 3)))
+    arrays = stats.to_arrays()
+    old = {
+        k: (np.array(v[0]) if k.endswith("_n") else v)
+        for k, v in arrays.items()
+    }
+    restored = SplitStats.from_arrays(old)
+    for op, values in stats.result().items():
+        np.testing.assert_array_equal(restored.result()[op], values)
+
+
+@pytest.mark.parametrize("sub_block_steps", [1, 3, 8])
 @pytest.mark.parametrize("lose_tail", [None, 1, 2])
 @pytest.mark.parametrize("i_start", [3, 7])
 def test_blocks_combine_exactly(
@@ -214,3 +278,42 @@ def test_blocks_combine_exactly(
         np.testing.assert_allclose(
             combined.result()[op], values, rtol=1e-10, err_msg=op
         )
+
+
+def test_only_variables_of_the_danra_config():
+    import mllam_data_prep as mdp
+
+    config = mdp.Config.from_yaml_file(danra_stats.DEFAULT_CONFIG)
+    only = danra_stats.only_variables(config, ["lwavr0m", "swavr0m"])
+    assert list(only.inputs) == ["danra_sl_state"]
+    assert only.inputs["danra_sl_state"].variables == ["lwavr0m", "swavr0m"]
+    assert list(only.output.variables) == ["state"]
+    # the config itself is unchanged
+    assert len(config.inputs) == 4
+    with pytest.raises(ValueError, match="not in the config"):
+        danra_stats.only_variables(config, ["lwavr0m", "olr"])
+
+
+def test_update_stats_replaces_only_the_recomputed_features():
+    features = ["a", "b", "c"]
+    splits = xr.DataArray(
+        [["2016", "2019"]], dims=["split_name", "split_part"]
+    )
+
+    def stats(names, values):
+        return xr.Dataset(
+            {
+                "state__train__mean": xr.DataArray(
+                    values, dims=["state_feature"], coords={"state_feature": names}
+                ),
+                "splits": splits,
+            },
+            attrs=dict(created_on="new" if len(names) < 3 else "old"),
+        )
+
+    base = stats(features, [1.0, np.nan, 3.0])
+    updated = danra_stats._update_stats(base, stats(["b"], [2.0]))
+    np.testing.assert_array_equal(updated.state__train__mean, [1.0, 2.0, 3.0])
+    assert updated.attrs["recomputed_features"] == "b"
+    assert updated.attrs["created_on"] == "new"
+    assert np.isnan(base.state__train__mean[1])

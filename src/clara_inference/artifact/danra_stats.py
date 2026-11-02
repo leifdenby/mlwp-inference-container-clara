@@ -28,6 +28,15 @@ Reading and resuming:
 About 540 GB is read for the whole split. The output has the layout of
 `compute_stats`' output (`{config name}.zarr`, for `assemble --stats-dir`).
 
+Missing values (NaN, in DANRA's radiation fields lwavr0m and swavr0m) are
+skipped, as by mllam-data-prep (xarray's mean/std), and the fraction
+skipped per feature is logged and recorded in the zarr's attributes.
+
+`--only-variables lwavr0m,swavr0m --update-from <stats zarr>` recomputes the
+statistics of only some variables (they are per feature, so this reads only
+those variables) and writes them, with the other features' statistics from
+the given zarr, to `--output`.
+
 `--dry-run [STEPS]` processes only the first few time steps of the split, to
 check the setup before the full run, and logs what the full run would
 read. As the source is chunked by 32 days, it still downloads one time chunk
@@ -39,6 +48,7 @@ Usage:
         --partials-dir partials-danra --cache-dir danra-cache
 """
 import argparse
+import copy
 import datetime
 import json
 import os
@@ -126,6 +136,66 @@ def _time_chunking(config):
             f"the time inputs have different chunks {chunk_steps}"
         )
     return times, chunk_steps.pop(), nbytes
+
+
+def only_variables(config, names):
+    """
+    `config` with only the source variables (and derived variables) in
+    `names`: inputs without any are dropped, as are output variables
+    without inputs
+    """
+    config = copy.deepcopy(config)
+    for input_name, input_config in list(config.inputs.items()):
+        variables = input_config.variables
+        if isinstance(variables, dict):
+            variables = {k: v for k, v in variables.items() if k in names}
+        elif variables:
+            variables = [v for v in variables if v in names]
+        derived = {
+            k: v
+            for k, v in (input_config.derived_variables or {}).items()
+            if k in names
+        }
+        if not variables and not derived:
+            del config.inputs[input_name]
+            continue
+        input_config.variables = variables or None
+        input_config.derived_variables = derived or None
+    targets = {i.target_output_variable for i in config.inputs.values()}
+    config.output.variables = {
+        k: v for k, v in config.output.variables.items() if k in targets
+    }
+    found = {
+        name
+        for i in config.inputs.values()
+        for name in [*(i.variables or []), *(i.derived_variables or {})]
+    }
+    if set(names) - found:
+        raise ValueError(f"not in the config: {sorted(set(names) - found)}")
+    return config
+
+
+def _update_stats(base, new):
+    """
+    The stats zarr content `base` with the statistics of the features in
+    `new` replaced by `new`'s (which must have the same period)
+    """
+    if not np.array_equal(base.splits.values, new.splits.values):
+        raise ValueError("the statistics are of different periods")
+    ds = base.copy(deep=True)
+    replaced = []
+    for var in new.data_vars:
+        if var == "splits":
+            continue
+        (dim,) = new[var].dims
+        missing = set(new[dim].values) - set(base[dim].values)
+        if missing:
+            raise ValueError(f"{var}: features {sorted(missing)} not in base")
+        ds[var].loc[{dim: new[dim].values}] = new[var].values
+        replaced.extend(str(f) for f in new[dim].values)
+    ds.attrs.update(new.attrs)
+    ds.attrs["recomputed_features"] = ", ".join(sorted(set(replaced)))
+    return ds
 
 
 def _extract_config(config, start, end):
@@ -299,7 +369,26 @@ def main():
         "downloads one time chunk of every variable (the first block). Use "
         "another --partials-dir than for the full run",
     )
+    parser.add_argument(
+        "--only-variables",
+        help="comma-separated source/derived variables (e.g. "
+        "lwavr0m,swavr0m): compute only their statistics (the statistics "
+        "are per feature), with --update-from for the others",
+    )
+    parser.add_argument(
+        "--update-from",
+        type=Path,
+        help="with --only-variables: a stats zarr of this tool whose other "
+        "features' statistics are kept (written to --output, not changed)",
+    )
     args = parser.parse_args()
+    if args.update_from and not args.only_variables:
+        parser.error("--update-from needs --only-variables")
+    only = args.only_variables.split(",") if args.only_variables else None
+
+    def _load_config():
+        config = mdp.Config.from_yaml_file(args.config)
+        return only_variables(config, only) if only else config
 
     # log through tqdm so log messages don't break the progress bar, and
     # silence mllam-data-prep's per-variable info messages
@@ -309,7 +398,7 @@ def main():
         filter={"": "INFO", "mllam_data_prep": "WARNING"},
     )
 
-    config = mdp.Config.from_yaml_file(args.config)
+    config = _load_config()
     split = config.output.splitting.splits["train"]
     if list(split.compute_statistics.ops) != [
         "mean",
@@ -349,6 +438,8 @@ def main():
         chunk_steps=chunk_steps,
         sub_block_steps=args.sub_block_steps,
     )
+    if only:
+        run_info["only_variables"] = only
     fp_run_info = args.partials_dir / "run_info.json"
     if fp_run_info.exists():
         # the sub-block size doesn't change the results (only memory and
@@ -400,7 +491,7 @@ def main():
                 # a fresh cache per block: the filesystem instances are cached
                 # with their cache directory
                 WholeFileCacheFileSystem.clear_instance_cache()
-                block_config = mdp.Config.from_yaml_file(args.config)
+                block_config = _load_config()
                 _use_cache(block_config, block_cache)
                 stats, features, carry = _process_block(
                     block_config,
@@ -431,6 +522,7 @@ def main():
                     for k, v in s.to_arrays(prefix=f"{c}_").items()
                 },
                 **{f"{c}_feature": f.values for c, f in features.items()},
+                **{f"{c}_n_grid": np.array(x.shape[1]) for c, (_, x) in carry.items()},
             )
             # the previous block's tail is not needed any more
             if k > 0:
@@ -438,12 +530,14 @@ def main():
             pbar.update(1)
 
     # combine the blocks
-    stats = {}
+    stats, n_grid = {}, {}
     for block in blocks:
         arrays = np.load(_fp("block", block))
         for c in CATEGORIES:
             if f"{c}_feature" not in arrays:
                 continue
+            if f"{c}_n_grid" in arrays:  # (not in older partials)
+                n_grid[c] = int(arrays[f"{c}_n_grid"])
             block_stats = SplitStats.from_arrays(arrays, prefix=f"{c}_")
             if c not in stats:
                 dim, names = f"{c}_feature", arrays[f"{c}_feature"]
@@ -452,15 +546,26 @@ def main():
             else:
                 stats[c][0].merge(block_stats)
 
+    # missing values (skipped, as by mllam-data-prep)
+    n_steps = int((end - start) / pd.Timedelta(step)) + 1
+    missing = {}
+    for c, (split_stats, feature) in stats.items():
+        if c not in n_grid:
+            continue
+        n_total = n_steps * n_grid[c]
+        for name, n in zip(feature.values, split_stats.values.n):
+            if n < n_total:
+                missing[str(name)] = f"{1 - n / n_total:.3%}"
+    if missing:
+        logger.info(f"missing values (skipped): {missing}")
+
     # the statics (time independent), from the first two times
-    ds_static = mdp.create_dataset(
-        config=_block_config(
-            mdp.Config.from_yaml_file(args.config),
-            _py(start),
-            _py(start) + step,
+    static = None
+    if "static" in config.output.variables:
+        ds_static = mdp.create_dataset(
+            config=_block_config(_load_config(), _py(start), _py(start) + step)
         )
-    )
-    static = ds_static["static"].load() if "static" in ds_static else None
+        static = ds_static["static"].load()
 
     ds = stats_dataset(
         stats,
@@ -479,6 +584,11 @@ def main():
         diff_std_note="std of second time-differences (as in training)",
         created_on=datetime.datetime.now().replace(microsecond=0).isoformat(),
     )
+    if missing:
+        ds.attrs["missing_values_skipped"] = json.dumps(missing)
+    if args.update_from:
+        ds = _update_stats(xr.open_zarr(args.update_from).load(), ds)
+        ds.attrs["updated_from"] = str(args.update_from)
     ds.to_zarr(args.output, mode="w", consolidated=True)
     logger.info(f"wrote {args.output}")
 
