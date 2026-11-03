@@ -45,6 +45,12 @@ regridding and the S3 upload.
 
 ## Model
 
+**[MODEL_CARD.md](MODEL_CARD.md)** describes the model's input and output
+variables: units, levels, CF standard names (and where they don't apply),
+sources and conversions, and what the model doesn't predict. It is
+generated from [artifact/model-card.yaml](artifact/model-card.yaml) with
+`uv run python -m clara_inference.model_card`.
+
 The model is described in
 [artifact/configs/model.yaml](artifact/configs/model.yaml): the checkpoint,
 the graph, the neural-lam arguments and the training neural-lam config.

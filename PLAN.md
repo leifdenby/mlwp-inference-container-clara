@@ -214,3 +214,6 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - Container run with the exact-stats artifact, 2026-10-26T06Z +18 h, 5 members. DINI for that date has left the bucket's retention, so the regridded inputs of the earlier run were reused (`--skip-completed`); forecast and conversion 169 s.
     - Ensemble-mean RMSE against DINI at +18 h: t2m 0.78 K (0.82 with ANNA's stats), mslp 0.56 hPa (0.79), 10 m wind 1.3–1.8 m/s.
     - `r` −0.95..2.2 and `swavr0m` down to −146 W/m² at single points, as before not clipped by default.
+  - Forecast from a recent DINI run (2026-11-03T12Z, IFS 00Z cycle), and humidity layers and surface pressure in the members figure.
+  - Model card draft: `artifact/model-card.yaml` → `MODEL_CARD.md` (`python -m clara_inference.model_card`). Variables grouped by height, single and pressure levels, with CF standard names (table v95); the tests check it against the datastore configs, `convert_output` and the loss weights.
+    - Next: write `long_name`/`standard_name` (and a `height` coordinate for t2m/u10m/v10m) into the output files from the card; ship the card in the artifact and the Zenodo package.
