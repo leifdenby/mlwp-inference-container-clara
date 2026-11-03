@@ -6,6 +6,9 @@ workdir):
 
 - `clara_example_t2m_mslp.png`: ensemble-mean t2m with mslp contours, the
   ensemble spread of t2m and DINI's t2m, at the last valid time
+- `clara_example_r_pres0m.png`: as above for relative humidity at 1000 hPa
+  (CLARA, like DANRA, has no 2 m humidity; masked where the level is below
+  ground) and surface pressure
 - `clara_example_members.png`: 10 m wind speed and net outgoing longwave
   radiation at the surface (-lwavr0m) of each member and of the
   ensemble mean, at the last valid time
@@ -146,6 +149,59 @@ _colorbar(fig, im_t, [0.68, 0.12, 0.3, 0.03], "2 m temperature (°C)")
 _suptitle(fig, f"CLARA example forecast: {when}")
 _save(fig, "clara_example_t2m_mslp.png")
 
+# 1b. relative humidity at 1000 hPa and surface pressure: ensemble mean,
+# spread, DINI (rows)
+pres0m = sl.pres0m.sel(time=valid).load() / 100
+pres0m_dini = sl_dini.pres0m.sel(time=valid).load() / 100
+r = pl.r.sel(time=valid, pressure=1000).load()
+r_dini = pl_dini.r.sel(time=valid, pressure=1000).load()
+# 1000 hPa is below ground where the surface pressure is lower
+r = r.where(pres0m >= 1000)
+r_dini = r_dini.where(pres0m_dini >= 1000)
+rows = [
+    (
+        "relative humidity at 1000 hPa",
+        r,
+        r_dini,
+        dict(cmap="YlGnBu", vmin=0.3, vmax=1.0),
+        "relative humidity (fraction)",
+        "ensemble std of r (fraction)",
+    ),
+    (
+        "surface pressure",
+        pres0m,
+        pres0m_dini,
+        dict(
+            cmap="cividis",
+            vmin=float(np.percentile(pres0m_dini, 1)),
+            vmax=float(np.percentile(pres0m_dini, 99)),
+        ),
+        "surface pressure (hPa)",
+        "ensemble std of surface pressure (hPa)",
+    ),
+]
+fig = plt.figure(figsize=(15, 10), facecolor=SURFACE)
+for row, (name, da, da_dini, style, label, spread_label) in enumerate(rows):
+    bottom = 0.56 - row * 0.48
+    panels = [
+        (f"CLARA ensemble mean: {name}", da.mean(MEMBER), style),
+        (f"CLARA ensemble spread of {name}", da.std(MEMBER),
+         dict(cmap="Blues", vmin=0)),
+        (f"DINI: {name}", da_dini, style),
+    ]
+    for i, (title, field, panel_style) in enumerate(panels):
+        ax = _map_axes(fig, [0.02 + i * 0.33, bottom, 0.3, 0.34])
+        im = _field(ax, field, **panel_style)
+        _title(ax, title)
+        _colorbar(
+            fig,
+            im,
+            [0.02 + i * 0.33, bottom - 0.035, 0.3, 0.015],
+            spread_label if i == 1 else label,
+        )
+_suptitle(fig, f"CLARA example forecast: {when}")
+_save(fig, "clara_example_r_pres0m.png")
+
 # 2. 10 m wind speed and net outgoing longwave radiation at the surface
 # (DANRA has no top-of-atmosphere OLR; lwavr0m is the net surface longwave,
 # positive downwards, so -lwavr0m is small under clouds) of each member
@@ -190,9 +246,18 @@ _save(fig, "clara_example_members.png")
 
 # 3. rmse against DINI and spread by lead time
 common = np.intersect1d(sl.time.values, sl_dini.time.values)
+# where 1000 hPa is above ground in DINI
+above_ground = sl_dini.pres0m >= 1.0e5
 scores = [
     ("t2m (K)", sl.t2m, sl_dini.t2m, 1),
     ("mslp (hPa)", sl.pres_seasurface, sl_dini.pres_seasurface, 100),
+    ("surface pressure (hPa)", sl.pres0m, sl_dini.pres0m, 100),
+    (
+        "r 1000 hPa (fraction)",
+        pl.r.sel(pressure=1000).where(above_ground),
+        pl_dini.r.sel(pressure=1000).where(above_ground),
+        1,
+    ),
     ("u10m (m/s)", sl.u10m, sl_dini.u10m, 1),
     ("v10m (m/s)", sl.v10m, sl_dini.v10m, 1),
     ("t 850 hPa (K)", pl.t.sel(pressure=850), pl_dini.t.sel(pressure=850), 1),
@@ -204,7 +269,7 @@ scores = [
     ),
 ]
 fig, axes = plt.subplots(
-    2, 3, figsize=(12, 6.4), facecolor=SURFACE, sharex=True
+    2, 4, figsize=(16, 6.4), facecolor=SURFACE, sharex=True
 )
 for ax, (title, da, da_dini, scale) in zip(axes.flat, scores):
     rmse, _, spread = _scores(da.load(), da_dini.load(), common)
