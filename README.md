@@ -113,8 +113,6 @@ The forecast: analysis 2026-10-26T06Z, +18 h, 5 members, run on a DGX Spark.
 - Initial states are from DINI; the boundary is IFS open data from the 00Z cycle (made with `dev-utils/make_ifs_boundary_zarr.py`).
 - It's compared with the DINI forecast from the same analysis, regridded to the DANRA grid. DINI is a forecast too, not the truth, so the RMSE shows how far apart the two models are.
 
-> **Interim statistics.** This forecast was normalised with the statistics from ANNA's artifact (`dev-utils/stats_from_anna.py`). They have the same features and are computed the same way, but over ANNA's training period (2000-01-01 → 2018-10-29). CLARA's own were computed over 2016-01-01 → 2019-10-22, as recorded in the checkpoint.
->
 > The figures show the model's unclipped outputs. Relative humidity and night-time short-wave radiation are partly outside their physical ranges, as the model doesn't constrain them; see [Post-processing](#post-processing-off-by-default).
 
 ![CLARA ensemble mean and spread of t2m, and DINI's t2m, at +18 h](docs/clara_example_t2m_mslp.png)
@@ -126,8 +124,8 @@ DANRA, and so CLARA, has no top-of-atmosphere OLR. The longwave row shows the ne
 ![Ensemble-mean RMSE against DINI and ensemble spread by lead time](docs/clara_example_scores.png)
 
 At +18 h the ensemble-mean RMSE against DINI is:
-- t2m: 0.76 K
-- mslp: 0.7 hPa
+- t2m: 0.78 K
+- mslp: 0.56 hPa
 - 10 m wind components: 1.3–1.8 m/s
 
 The ensemble spread grows with lead time and is close to the RMSE, a little below it.
@@ -176,6 +174,8 @@ Two tools compute the statistics exactly as mllam-data-prep does:
 - **mean of the first** time differences;
 - **std of the second** time differences. This is what mllam-data-prep's `calc_stats` actually computes for `diff_std`.
 
+Missing values are skipped, as xarray's `mean`/`std` in `calc_stats` do. DANRA's surface radiation fields `lwavr0m` and `swavr0m` have a few (0.009 % over the split). The share skipped per feature is logged and stored in the zarr's `missing_values_skipped` attribute.
+
 | Tool | Datastore | Source | Reads |
 |---|---|---|---|
 | [`danra_stats`](src/clara_inference/artifact/danra_stats.py) | `danra_model1_config` (interior: state, forcing, static) | DANRA v0.5.0 on the ECMWF object store | ~540 GB |
@@ -222,7 +222,19 @@ uv run python -m clara_inference.artifact.danra_stats \
 
 The resulting `stats/` directory is a few MB. Copy it back and pass it to `assemble --stats-dir` (below).
 
-Until the exact statistics are in, `dev-utils/stats_from_anna.py` makes interim ones from ANNA's artifact. They have the same features, source box and method, but ANNA's period.
+The statistics are per feature, so a few features can be recomputed on their own and merged into an existing zarr. `--only-variables` reads only those variables, and `--update-from` takes the other features from the existing zarr; the new zarr's `recomputed_features` attribute lists the replaced ones. The artifact's DANRA statistics were made this way: the radiation fields were recomputed after missing values were skipped (about 1 h instead of 10 h for all features).
+
+```bash
+uv run python -m clara_inference.artifact.danra_stats \
+    --only-variables lwavr0m,swavr0m \
+    --update-from stats/danra_model1_config.zarr \
+    --output stats/danra_model1_config.v2.zarr \
+    --partials-dir partials-danra-radiation --cache-dir danra-cache
+```
+
+`--sub-block-steps` (default 32) sets how many time steps are extracted at once. With 64, a full DANRA run took about 10 h on a 1 Gbit/s server and peaked at about 28 GB of memory.
+
+`dev-utils/stats_from_anna.py` makes approximate statistics from ANNA's artifact, with the same features, source box and method, but ANNA's period. They were used before the exact ones were available and are kept for testing only.
 
 ### Building the artifact
 

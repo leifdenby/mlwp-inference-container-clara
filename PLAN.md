@@ -123,10 +123,10 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
     - It reuses `SplitStats` (now saveable to arrays, with less overlap allowed at the split start).
     - Unit tests cover single-step first blocks, lost tails and single-step sub-blocks.
   - Both tools have `--dry-run [STEPS]`, partials and resume, and retries. The server commands are in the README.
-- [~] The user runs both tools on their server (started 2026-10-28; DANRA with `--sub-block-steps 128`) and copies `stats/` back. Then:
-  - assemble without `--placeholder-stats`;
-  - rerun the example forecast and the figures;
-  - remove the interim-stats notes.
+- [x] The user ran both tools on their server and copied `stats/` back.
+  - DANRA with `--sub-block-steps 128` was OOM-killed; rerun with 64 after the memory fixes: 13 min per block, 28 GB peak, about 10 h.
+  - `lwavr0m`/`swavr0m` came out NaN: DANRA has missing values (0.009 %), which `calc_stats` (xarray) skips. The tools now skip them too; the two features were recomputed with `--only-variables`/`--update-from`.
+- [x] Artifact `artifact/build/clara-exact-stats` (+ `.zip`) assembled with the exact stats (`artifact/build/stats-final`); example forecast and figures rerun; interim-stats notes removed.
 - [x] Zenodo, as for ANNA: separate records for the checkpoint and the inference package.
   - `zenodo_draft --kind {checkpoint,package}` creates drafts only.
   - Creators are the paper authors, plus Leif Denby for the package.
@@ -175,7 +175,7 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
     - Datastores: 9 s. Forecast: 2 min 5 s. Conversion: 25 s.
   - Scores as in the uv run (other random members): t2m RMSE at +18 h 0.82 K, mslp 0.79 hPa.
   - The GB10's unified memory means `nvidia-smi` doesn't report GPU memory.
-- [x] Example forecast figures in the README (`dev-utils/plot_example_forecast.py` → `docs/clara_example_*.png`), from the run with ANNA's stats.
+- [x] Example forecast figures in the README (`dev-utils/plot_example_forecast.py` → `docs/clara_example_*.png`), from the container run with the exact stats.
 
 ## Phase 3: tests (CPU)
 
@@ -187,7 +187,7 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
 - [x] `uv run pytest`: all pass.
 - [x] The sanitized checkpoint loads with strict loading: 1,397 parameters, 0 missing, 0 mismatched.
 - [x] End-to-end mechanics on the DGX Spark: 2026-10-26T06Z +18 h, 5 members, about 2.5 min for forecast and conversion; the boundary order check passed.
-- [ ] End-to-end with the real stats: no NaNs, plausible values, spread > 0 and growing, RMSE against DINI of the size of short-range forecast differences. The placeholder-stats run diverges, as expected.
+- [x] End-to-end with the real stats (container, 2026-11-03): no NaNs, plausible values, spread > 0 and growing, RMSE against DINI of the size of short-range forecast differences. The placeholder-stats run diverges, as expected.
 - [x] Image build and container run (see Phase 2).
 
 ## Log
@@ -209,3 +209,8 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
     - In the example, 31% of `swavr0m` values are negative (night, median −4 W/m²), and `r` > 1 at 5–12% of points at 400–925 hPa.
   - Zenodo draft tool and the `model.yaml` checkpoint fields.
   - The Containerfile only sends the GitHub token to `api.github.com`; before, it was sent to any `PACKAGE_URL`.
+- 2026-11-03:
+  - Exact stats in (DANRA radiation fields recomputed NaN-skipping); no NaNs, std within ~1–5 % of ANNA's.
+  - Container run with the exact-stats artifact, 2026-10-26T06Z +18 h, 5 members. DINI for that date has left the bucket's retention, so the regridded inputs of the earlier run were reused (`--skip-completed`); forecast and conversion 169 s.
+    - Ensemble-mean RMSE against DINI at +18 h: t2m 0.78 K (0.82 with ANNA's stats), mslp 0.56 hPa (0.79), 10 m wind 1.3–1.8 m/s.
+    - `r` −0.95..2.2 and `swavr0m` down to −146 W/m² at single points, as before not clipped by default.
