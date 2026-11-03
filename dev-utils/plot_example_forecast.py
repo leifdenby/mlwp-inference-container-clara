@@ -9,8 +9,9 @@ workdir):
 - `clara_example_members.png`: 10 m wind speed, net outgoing longwave
   radiation at the surface (-lwavr0m), relative humidity at 1000 hPa
   (CLARA, like DANRA, has no 2 m humidity; masked where the level is below
-  ground) and surface pressure of each member and of the ensemble mean, at
-  the last valid time
+  ground), the highest relative humidity in low, mid and high layers (a
+  proxy for cloud: CLARA has no cloud cover) and surface pressure of each
+  member and of the ensemble mean, at the last valid time
 - `clara_example_scores.png`: ensemble-mean rmse against DINI and ensemble
   spread by lead time (the scores of `check_forecast_output.py`)
 
@@ -158,8 +159,20 @@ wind = np.hypot(u10m, v10m).load()
 wind_mean = np.hypot(u10m.mean(MEMBER), v10m.mean(MEMBER)).load()
 olr = -sl.lwavr0m.sel(time=valid).load()
 pres0m = sl.pres0m.sel(time=valid).load() / 100
-# 1000 hPa is below ground where the surface pressure is lower
-r = pl.r.sel(time=valid, pressure=1000).load().where(pres0m >= 1000)
+# levels below ground (surface pressure lower than the level's) left out
+r_all = pl.r.sel(time=valid).load()
+r_all = r_all.where(pres0m >= r_all.pressure)
+r = r_all.sel(pressure=1000)
+# CLARA has no cloud cover: the most humid level of low, mid and high layers
+# as a proxy
+CLOUD_LAYERS = dict(
+    low=[1000, 925, 850], mid=[700, 600], high=[400, 200]
+)
+r_layers = {
+    name: r_all.sel(pressure=levels).max("pressure")
+    for name, levels in CLOUD_LAYERS.items()
+}
+r_layer_style = dict(cmap="Greys_r", vmin=0.5, vmax=1.0)
 rows = [
     (
         wind,
@@ -182,6 +195,16 @@ rows = [
         dict(cmap="YlGnBu", vmin=0.3, vmax=1.0),
         "relative humidity\nat 1000 hPa (fraction)",
     ),
+    *[
+        (
+            r_layers[name],
+            r_layers[name].mean(MEMBER),
+            "ensemble mean",
+            r_layer_style,
+            f"max relative humidity,\n{name} ({levels[0]}–{levels[-1]} hPa)",
+        )
+        for name, levels in CLOUD_LAYERS.items()
+    ],
     (
         pres0m,
         pres0m.mean(MEMBER),
@@ -195,18 +218,28 @@ rows = [
     ),
 ]
 n_cols = n_members + 1
-fig = plt.figure(figsize=(3 * n_cols + 1.6, 11.2), facecolor=SURFACE)
+fig = plt.figure(
+    figsize=(3 * n_cols + 1.6, 2.8 * len(rows) + 0.6), facecolor=SURFACE
+)
 width = 0.86 / n_cols
+# row height as a fraction of the figure, with room for the titles
+row_height = (1 - 0.6 / fig.get_figheight()) / len(rows)
 for row, (da, da_mean, mean_title, style, label) in enumerate(rows):
-    bottom = 0.735 - row * 0.235
+    bottom = 1 - (row + 1) * row_height - 0.6 / fig.get_figheight()
+    height = 0.81 * row_height
     stamps = [(f"member {int(m)}", da.sel({MEMBER: m})) for m in da[MEMBER]]
     stamps.append((mean_title, da_mean))
     for col, (title, field) in enumerate(stamps):
-        ax = _map_axes(fig, [0.01 + col * width, bottom, width - 0.008, 0.19])
+        ax = _map_axes(
+            fig, [0.01 + col * width, bottom, width - 0.008, height]
+        )
         im = _field(ax, field, **style)
         _title(ax, title)
     cb = fig.colorbar(
-        im, cax=fig.add_axes([0.885, bottom + 0.015, 0.008, 0.16])
+        im,
+        cax=fig.add_axes(
+            [0.885, bottom + 0.08 * height, 0.008, 0.84 * height]
+        ),
     )
     cb.set_label(label, color=INK_2, fontsize=9)
     cb.ax.tick_params(colors=INK_2, labelsize=8)
