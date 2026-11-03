@@ -6,12 +6,11 @@ workdir):
 
 - `clara_example_t2m_mslp.png`: ensemble-mean t2m with mslp contours, the
   ensemble spread of t2m and DINI's t2m, at the last valid time
-- `clara_example_r_pres0m.png`: as above for relative humidity at 1000 hPa
+- `clara_example_members.png`: 10 m wind speed, net outgoing longwave
+  radiation at the surface (-lwavr0m), relative humidity at 1000 hPa
   (CLARA, like DANRA, has no 2 m humidity; masked where the level is below
-  ground) and surface pressure
-- `clara_example_members.png`: 10 m wind speed and net outgoing longwave
-  radiation at the surface (-lwavr0m) of each member and of the
-  ensemble mean, at the last valid time
+  ground) and surface pressure of each member and of the ensemble mean, at
+  the last valid time
 - `clara_example_scores.png`: ensemble-mean rmse against DINI and ensemble
   spread by lead time (the scores of `check_forecast_output.py`)
 
@@ -149,67 +148,18 @@ _colorbar(fig, im_t, [0.68, 0.12, 0.3, 0.03], "2 m temperature (°C)")
 _suptitle(fig, f"CLARA example forecast: {when}")
 _save(fig, "clara_example_t2m_mslp.png")
 
-# 1b. relative humidity at 1000 hPa and surface pressure: ensemble mean,
-# spread, DINI (rows)
-pres0m = sl.pres0m.sel(time=valid).load() / 100
-pres0m_dini = sl_dini.pres0m.sel(time=valid).load() / 100
-r = pl.r.sel(time=valid, pressure=1000).load()
-r_dini = pl_dini.r.sel(time=valid, pressure=1000).load()
-# 1000 hPa is below ground where the surface pressure is lower
-r = r.where(pres0m >= 1000)
-r_dini = r_dini.where(pres0m_dini >= 1000)
-rows = [
-    (
-        "relative humidity at 1000 hPa",
-        r,
-        r_dini,
-        dict(cmap="YlGnBu", vmin=0.3, vmax=1.0),
-        "relative humidity (fraction)",
-        "ensemble std of r (fraction)",
-    ),
-    (
-        "surface pressure",
-        pres0m,
-        pres0m_dini,
-        dict(
-            cmap="cividis",
-            vmin=float(np.percentile(pres0m_dini, 1)),
-            vmax=float(np.percentile(pres0m_dini, 99)),
-        ),
-        "surface pressure (hPa)",
-        "ensemble std of surface pressure (hPa)",
-    ),
-]
-fig = plt.figure(figsize=(15, 10), facecolor=SURFACE)
-for row, (name, da, da_dini, style, label, spread_label) in enumerate(rows):
-    bottom = 0.56 - row * 0.48
-    panels = [
-        (f"CLARA ensemble mean: {name}", da.mean(MEMBER), style),
-        (f"CLARA ensemble spread of {name}", da.std(MEMBER),
-         dict(cmap="Blues", vmin=0)),
-        (f"DINI: {name}", da_dini, style),
-    ]
-    for i, (title, field, panel_style) in enumerate(panels):
-        ax = _map_axes(fig, [0.02 + i * 0.33, bottom, 0.3, 0.34])
-        im = _field(ax, field, **panel_style)
-        _title(ax, title)
-        _colorbar(
-            fig,
-            im,
-            [0.02 + i * 0.33, bottom - 0.035, 0.3, 0.015],
-            spread_label if i == 1 else label,
-        )
-_suptitle(fig, f"CLARA example forecast: {when}")
-_save(fig, "clara_example_r_pres0m.png")
-
-# 2. 10 m wind speed and net outgoing longwave radiation at the surface
+# 2. 10 m wind speed, net outgoing longwave radiation at the surface
 # (DANRA has no top-of-atmosphere OLR; lwavr0m is the net surface longwave,
-# positive downwards, so -lwavr0m is small under clouds) of each member
-# (columns) and of the ensemble mean
+# positive downwards, so -lwavr0m is small under clouds), relative humidity
+# at 1000 hPa and surface pressure of each member (columns) and of the
+# ensemble mean
 u10m, v10m = sl.u10m.sel(time=valid), sl.v10m.sel(time=valid)
 wind = np.hypot(u10m, v10m).load()
 wind_mean = np.hypot(u10m.mean(MEMBER), v10m.mean(MEMBER)).load()
 olr = -sl.lwavr0m.sel(time=valid).load()
+pres0m = sl.pres0m.sel(time=valid).load() / 100
+# 1000 hPa is below ground where the surface pressure is lower
+r = pl.r.sel(time=valid, pressure=1000).load().where(pres0m >= 1000)
 rows = [
     (
         wind,
@@ -225,19 +175,39 @@ rows = [
         dict(cmap="Greys", vmin=0, vmax=float(np.percentile(olr, 99.5))),
         "net outgoing longwave\nat the surface (W/m²)",
     ),
+    (
+        r,
+        r.mean(MEMBER),
+        "ensemble mean",
+        dict(cmap="YlGnBu", vmin=0.3, vmax=1.0),
+        "relative humidity\nat 1000 hPa (fraction)",
+    ),
+    (
+        pres0m,
+        pres0m.mean(MEMBER),
+        "ensemble mean",
+        dict(
+            cmap="cividis",
+            vmin=float(np.percentile(pres0m, 1)),
+            vmax=float(np.percentile(pres0m, 99)),
+        ),
+        "surface pressure (hPa)",
+    ),
 ]
 n_cols = n_members + 1
-fig = plt.figure(figsize=(3 * n_cols + 1.6, 5.8), facecolor=SURFACE)
+fig = plt.figure(figsize=(3 * n_cols + 1.6, 11.2), facecolor=SURFACE)
 width = 0.86 / n_cols
 for row, (da, da_mean, mean_title, style, label) in enumerate(rows):
-    bottom = 0.5 - row * 0.45
+    bottom = 0.735 - row * 0.235
     stamps = [(f"member {int(m)}", da.sel({MEMBER: m})) for m in da[MEMBER]]
     stamps.append((mean_title, da_mean))
     for col, (title, field) in enumerate(stamps):
-        ax = _map_axes(fig, [0.01 + col * width, bottom, width - 0.008, 0.36])
+        ax = _map_axes(fig, [0.01 + col * width, bottom, width - 0.008, 0.19])
         im = _field(ax, field, **style)
         _title(ax, title)
-    cb = fig.colorbar(im, cax=fig.add_axes([0.885, bottom + 0.03, 0.008, 0.3]))
+    cb = fig.colorbar(
+        im, cax=fig.add_axes([0.885, bottom + 0.015, 0.008, 0.16])
+    )
     cb.set_label(label, color=INK_2, fontsize=9)
     cb.ax.tick_params(colors=INK_2, labelsize=8)
     cb.outline.set_edgecolor(GRID)
