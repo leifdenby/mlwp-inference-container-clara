@@ -50,12 +50,13 @@ from clara_inference.fetch_checkpoint import _md5
 ZENODO = "https://zenodo.org"
 ZENODO_SANDBOX = "https://sandbox.zenodo.org"
 REPO_URL = "https://github.com/leifdenby/mlwp-inference-container-clara"
-# the file names in the Zenodo records (the records refer to the model as
-# CRPS-LAM, not by DMI's name for it). The container saves the checkpoint
-# under model.yaml's artifact_path, whatever its name in the record
+# the file names in the Zenodo records. The checkpoint record refers to the
+# model as CRPS-LAM, not by DMI's name for it (CLARA), which is used for the
+# inference package only. The container saves the checkpoint under
+# model.yaml's artifact_path, whatever its name in the record
 UPLOAD_NAMES = {
     "checkpoint": "crps_lam_danra_ifs.ckpt",
-    "package": "crps_lam_danra_ifs_inference_package.zip",
+    "package": "clara_inference_package.zip",
 }
 
 PAPER_TITLE = (
@@ -175,7 +176,7 @@ def package_metadata(fp_zip, version):
         for name, attrs in artifact["stats"].items()
     )
     description = f"""
-<p>Inference package of
+<p>Inference package of <b>CLARA</b> (CRPS-LAM Rapid Atmospheric ensembles),
 the CRPS-LAM model of <a href="https://arxiv.org/abs/2510.09484">Wikingsson
 et al., "{PAPER_TITLE}"</a> trained on DANRA and fine-tuned with an IFS
 forecast boundary: everything needed to run the model as it was trained,
@@ -205,15 +206,12 @@ provenance.</li>
 </ul>
 
 <p>Running the model from operational data is done by
-<a href="{REPO_URL}">the inference container</a>, which runs it from
+<a href="{REPO_URL}">mlwp-inference-container-clara</a>, which runs CLARA from
 DINI initial states and an IFS boundary.</p>
 """
     return {
         "upload_type": "dataset",
-        "title": (
-            "CRPS-LAM inference package (DANRA interior, IFS boundary "
-            "fine-tune)"
-        ),
+        "title": "CLARA inference package for the CRPS-LAM model",
         "creators": PAPER_AUTHORS + PACKAGE_AUTHORS,
         "description": " ".join(description.split()),
         "access_right": "open",

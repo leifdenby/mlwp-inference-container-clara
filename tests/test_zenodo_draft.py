@@ -44,16 +44,16 @@ def test_checkpoint_metadata():
     assert zd.UPLOAD_NAMES["checkpoint"] in meta["description"]
 
 
-def test_records_dont_use_the_name_clara(tmp_path):
-    """The records refer to the model as CRPS-LAM (the repo URL aside)."""
+def test_checkpoint_record_doesnt_use_the_name_clara():
+    """
+    The checkpoint record refers to the model as CRPS-LAM (the repo URL
+    aside); only the inference package is called CLARA.
+    """
     model = yaml.safe_load(MODEL_YAML.read_text())
-    for meta in [
-        zd.checkpoint_metadata(zd.UPLOAD_NAMES["checkpoint"], model, "1.0"),
-        zd.package_metadata(_package_zip(tmp_path), "1.0"),
-    ]:
-        text = (meta["title"] + meta["description"]).replace(zd.REPO_URL, "")
-        assert "clara" not in text.lower()
-    assert all("clara" not in n for n in zd.UPLOAD_NAMES.values())
+    meta = zd.checkpoint_metadata(zd.UPLOAD_NAMES["checkpoint"], model, "1.0")
+    text = (meta["title"] + meta["description"]).replace(zd.REPO_URL, "")
+    assert "clara" not in text.lower()
+    assert "clara" not in zd.UPLOAD_NAMES["checkpoint"]
 
 
 def test_package_requires_the_checkpoint(tmp_path):
