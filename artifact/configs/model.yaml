@@ -15,10 +15,10 @@ checkpoint:
   # the inference package, which refers to it. Filled in once the record
   # exists; clara_inference.artifact.assemble checks that the checkpoint it
   # sanitizes has this md5 (and fills in md5/url if they're null)
-  zenodo_record: null
-  doi: null
-  url: null
-  md5: null
+  zenodo_record: 24354284
+  doi: 10.5281/zenodo.24354284
+  url: https://zenodo.org/records/24354284/files/crps_lam_danra_ifs.ckpt?download=1
+  md5: 3a0f35622649d40f416b3a82d0041b3c
   # where the checkpoint is put in the inference artifact directory
   artifact_path: clara_model.ckpt
 

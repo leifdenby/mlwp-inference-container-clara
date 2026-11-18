@@ -133,7 +133,8 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - The licence is a placeholder (`cc-by-4.0`) until the authors decide.
   - The package draft is refused with placeholder stats or without the checkpoint DOI.
 - [x] `model.yaml` carries `zenodo_record`, `doi`, `url` and `md5`. `assemble` checks the sanitized checkpoint's md5 against them; sanitizing is deterministic.
-- [ ] Draft the checkpoint record (the user's Zenodo token) and fill in `model.yaml`. Draft the package record after the exact stats. The drafts get reviewed before publishing.
+- [x] Checkpoint record drafted (Zenodo 24354284, reserved DOI 10.5281/zenodo.24354284, file `crps_lam_danra_ifs.ckpt`, not CLARA-named) and filled into `model.yaml`. Not published: to be reviewed.
+- [ ] Reassemble the package with the checkpoint DOI and draft the package record (CLARA-named). The drafts get reviewed before publishing.
 - [?] Making the repo and images public: agreed. Still open: whether `real-prob-lam` (neural-lam) goes public too, and the repo owner (`leifdenby` or `dmidk`).
 - [x] `assemble`:
   - configs, stats datastores, graph from the training zip, DANRA grid from the object store
