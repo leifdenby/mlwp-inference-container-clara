@@ -9,7 +9,7 @@ This repository builds the inference container images for **CLARA**,
 operationally. "Rapid" refers to the model's main strength: each ensemble
 member is generated in a single forward pass, about 39× faster than diffusion
 baselines. CRPS-LAM is the probabilistic machine-learning limited-area model
-of Larsson et al. (2025), ["CRPS-LAM: Probabilistic Regional Weather
+of Wikingsson et al. (2025), ["CRPS-LAM: Probabilistic Regional Weather
 Forecasting with Continuous Ranked Probability
 Score"](https://arxiv.org/abs/2510.09484).
 
@@ -55,7 +55,7 @@ The model is described in
 [artifact/configs/model.yaml](artifact/configs/model.yaml): the checkpoint,
 the graph, the neural-lam arguments and the training neural-lam config.
 
-**Paper:** E. Larsson, J. Oskarsson, T. Landelius, F. Lindsten,
+**Paper:** E. Wikingsson, J. Oskarsson, T. Landelius, F. Lindsten,
 [arXiv:2510.09484](https://arxiv.org/abs/2510.09484).
 
 **Checkpoint:** `CRPS_IFS_ALL_FINETUNE_AR12-train-crps-4x330-05_21_13-3613`.

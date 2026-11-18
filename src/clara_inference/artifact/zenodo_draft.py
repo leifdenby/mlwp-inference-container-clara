@@ -50,6 +50,13 @@ from clara_inference.fetch_checkpoint import _md5
 ZENODO = "https://zenodo.org"
 ZENODO_SANDBOX = "https://sandbox.zenodo.org"
 REPO_URL = "https://github.com/leifdenby/mlwp-inference-container-clara"
+# the file names in the Zenodo records (the records refer to the model as
+# CRPS-LAM, not by DMI's name for it). The container saves the checkpoint
+# under model.yaml's artifact_path, whatever its name in the record
+UPLOAD_NAMES = {
+    "checkpoint": "crps_lam_danra_ifs.ckpt",
+    "package": "crps_lam_danra_ifs_inference_package.zip",
+}
 
 PAPER_TITLE = (
     "CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous "
@@ -93,13 +100,15 @@ def _paper_relation():
     }
 
 
-def checkpoint_metadata(fp_ckpt, model, version):
-    """The checkpoint record's metadata (`model`: model.yaml)."""
+def checkpoint_metadata(name, model, version):
+    """
+    The checkpoint record's metadata (`name`: the file name in the record,
+    `model`: model.yaml).
+    """
     training = model["training"]
     args = model["train_model_args"]
     description = f"""
-<p>Model weights of <b>CLARA</b> (CRPS-LAM Rapid Atmospheric ensembles): the
-probabilistic limited area model CRPS-LAM of
+<p>Model weights of the probabilistic limited area model CRPS-LAM of
 <a href="https://arxiv.org/abs/2510.09484">Wikingsson et al.,
 "{PAPER_TITLE}"</a>, trained on the DANRA reanalysis (interior) and
 fine-tuned with an IFS forecast boundary.</p>
@@ -111,7 +120,7 @@ grid) in 3-hourly steps, with a 400 km IFS boundary (6-hourly lead times of
 the 00/12 UTC cycles, normalised with ERA5 statistics). Training statistics
 period: 2016-01-01 to 2019-10-22.</p>
 
-<p>File: <code>{fp_ckpt.name}</code>, a PyTorch Lightning checkpoint
+<p>File: <code>{name}</code>, a PyTorch Lightning checkpoint
 (training run <code>{training['run_name']}</code>, epoch {training['epoch']},
 step {training['global_step']}) reduced to the weights
 (<code>state_dict</code>) and the training arguments and config as plain
@@ -122,15 +131,14 @@ weights are unchanged.</p>
 <p>To run the model you also need the inference package (training configs,
 normalisation statistics, grids and graph), published separately, and
 neural-lam as pinned in
-<a href="{REPO_URL}">mlwp-inference-container-clara</a>, which runs CLARA
+<a href="{REPO_URL}">the inference container</a>, which runs the model
 operationally from DINI initial states and an IFS boundary. Model arguments:
 <code>{' '.join(str(a) for a in args)}</code>.</p>
 """
     return {
         "upload_type": "other",
         "title": (
-            "CLARA: CRPS-LAM model weights (DANRA interior, IFS boundary "
-            "fine-tune)"
+            "CRPS-LAM model weights (DANRA interior, IFS boundary fine-tune)"
         ),
         "creators": PAPER_AUTHORS,
         "description": " ".join(description.split()),
@@ -167,7 +175,7 @@ def package_metadata(fp_zip, version):
         for name, attrs in artifact["stats"].items()
     )
     description = f"""
-<p>Inference package of <b>CLARA</b> (CRPS-LAM Rapid Atmospheric ensembles),
+<p>Inference package of
 the CRPS-LAM model of <a href="https://arxiv.org/abs/2510.09484">Wikingsson
 et al., "{PAPER_TITLE}"</a> trained on DANRA and fine-tuned with an IFS
 forecast boundary: everything needed to run the model as it was trained,
@@ -175,7 +183,7 @@ except the weights.</p>
 
 <p><b>This package does not contain the model weights.</b> They are
 published separately: <a href="https://doi.org/{ckpt['doi']}">{ckpt['doi']}
-</a> (<code>{ckpt['artifact_path']}</code>, md5 <code>{ckpt['md5']}</code>).
+</a> (<code>{UPLOAD_NAMES['checkpoint']}</code>, md5 <code>{ckpt['md5']}</code>).
 </p>
 
 <p>Contents:</p>
@@ -197,12 +205,15 @@ provenance.</li>
 </ul>
 
 <p>Running the model from operational data is done by
-<a href="{REPO_URL}">mlwp-inference-container-clara</a>, which runs it from
+<a href="{REPO_URL}">the inference container</a>, which runs it from
 DINI initial states and an IFS boundary.</p>
 """
     return {
         "upload_type": "dataset",
-        "title": "CLARA inference package for the CRPS-LAM model",
+        "title": (
+            "CRPS-LAM inference package (DANRA interior, IFS boundary "
+            "fine-tune)"
+        ),
         "creators": PAPER_AUTHORS + PACKAGE_AUTHORS,
         "description": " ".join(description.split()),
         "access_right": "open",
@@ -265,22 +276,32 @@ def main():
     parser.add_argument(
         "--version", default="1.0", help="record version (default: %(default)s)"
     )
+    parser.add_argument(
+        "--upload-name",
+        default=None,
+        help="the file name in the record (default: "
+        f"{UPLOAD_NAMES['checkpoint']} or {UPLOAD_NAMES['package']})",
+    )
     parser.add_argument("--token-file", type=Path)
     parser.add_argument("--sandbox", action="store_true")
     parser.add_argument("--deposition-id", default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    name = args.upload_name or UPLOAD_NAMES[args.kind]
     if args.kind == "checkpoint":
         model = yaml.safe_load(args.model_yaml.read_text())
-        metadata = checkpoint_metadata(args.file, model, args.version)
+        metadata = checkpoint_metadata(name, model, args.version)
     else:
         try:
             metadata = package_metadata(args.file, args.version)
         except ValueError as ex:
             sys.exit(str(ex))
     md5 = _md5(args.file)
-    print(f"{args.file.name}: {args.file.stat().st_size} bytes, md5 {md5}")
+    print(
+        f"{args.file.name} (as {name}): {args.file.stat().st_size} bytes, "
+        f"md5 {md5}"
+    )
     if args.dry_run:
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
         print("to review:\n- " + "\n- ".join(REVIEW_NOTES))
@@ -315,12 +336,12 @@ def main():
 
     # remove an earlier upload of the same file from the draft
     for f in deposition.get("files", []):
-        if f["filename"] == args.file.name:
+        if f["filename"] == name:
             session.delete(f["links"]["self"], timeout=60).raise_for_status()
 
-    print(f"uploading {args.file.name} to draft {dep_id} ...")
+    print(f"uploading {name} to draft {dep_id} ...", flush=True)
     with open(args.file, "rb") as fh:
-        r = session.put(f"{bucket}/{args.file.name}", data=fh, timeout=3600)
+        r = session.put(f"{bucket}/{name}", data=fh, timeout=3600)
     r.raise_for_status()
     uploaded_md5 = r.json()["checksum"].removeprefix("md5:")
     if uploaded_md5 != md5:
@@ -334,7 +355,7 @@ def main():
     r.raise_for_status()
     deposition = r.json()
     doi = deposition["metadata"].get("prereserve_doi", {}).get("doi")
-    url = f"{base}/records/{dep_id}/files/{args.file.name}?download=1"
+    url = f"{base}/records/{dep_id}/files/{name}?download=1"
     print(f"draft {dep_id} ready for review: {deposition['links']['html']}")
     print(f"reserved DOI: {doi}")
     if args.kind == "checkpoint":

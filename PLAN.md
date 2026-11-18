@@ -6,7 +6,7 @@ Status: `[x]` done, `[~]` in progress, `[ ]` to do, `[?]` needs a decision.
 ## Goal
 
 An operational inference container for **CLARA** (**C**RPS-**LA**M **R**apid
-**A**tmospheric ensembles), DMI's name for the CRPS-LAM model (Larsson et al.
+**A**tmospheric ensembles), DMI's name for the CRPS-LAM model (Wikingsson et al.
 2025, [arXiv:2510.09484](https://arxiv.org/abs/2510.09484)). CRPS-LAM is a
 probabilistic limited-area model: neural-lam `crps` with a hybrid GNN + UNet
 backbone (`graph_unet2`) and noise injection, trained with CRPS.

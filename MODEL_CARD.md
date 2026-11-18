@@ -6,7 +6,7 @@
 
 ## Model
 
-- **Paper:** CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous Ranked Probability Score, Erik Larsson, Joel Oskarsson, Tomas Landelius, Fredrik Lindsten, [arXiv:2510.09484](https://arxiv.org/abs/2510.09484)
+- **Paper:** CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous Ranked Probability Score, Erik Wikingsson, Joel Oskarsson, Tomas Landelius, Fredrik Lindsten, [arXiv:2510.09484](https://arxiv.org/abs/2510.09484)
 - **Architecture:** the crps model of neural-lam with a graph_unet2 backbone, 251.5 M parameters, trained with a CRPS objective (see the paper). This checkpoint is the fine-tune with an IFS forecast boundary: 5-member ensembles over 12 autoregressive steps, 93 epochs
 - **Training data:**
   - interior: DANRA v0.5.0 reanalysis, 3-hourly

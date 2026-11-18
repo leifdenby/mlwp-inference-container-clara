@@ -40,7 +40,7 @@ model:
     title: >-
       CRPS-LAM: Probabilistic Regional Weather Forecasting with Continuous
       Ranked Probability Score
-    authors: Erik Larsson, Joel Oskarsson, Tomas Landelius, Fredrik Lindsten
+    authors: Erik Wikingsson, Joel Oskarsson, Tomas Landelius, Fredrik Lindsten
     arxiv: "2510.09484"
   architecture: >-
     the crps model of neural-lam with a graph_unet2 backbone, 251.5 M

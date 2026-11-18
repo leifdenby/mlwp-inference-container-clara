@@ -35,10 +35,25 @@ def _package_zip(tmp_path, placeholder_stats=False, doi=DOI):
 
 def test_checkpoint_metadata():
     model = yaml.safe_load(MODEL_YAML.read_text())
-    meta = zd.checkpoint_metadata(Path("clara_model.ckpt"), model, "1.0")
+    meta = zd.checkpoint_metadata(
+        zd.UPLOAD_NAMES["checkpoint"], model, "1.0"
+    )
     assert meta["creators"] == zd.PAPER_AUTHORS
     assert meta["prereserve_doi"] is True
     assert "--backbone_model graph_unet2" in meta["description"]
+    assert zd.UPLOAD_NAMES["checkpoint"] in meta["description"]
+
+
+def test_records_dont_use_the_name_clara(tmp_path):
+    """The records refer to the model as CRPS-LAM (the repo URL aside)."""
+    model = yaml.safe_load(MODEL_YAML.read_text())
+    for meta in [
+        zd.checkpoint_metadata(zd.UPLOAD_NAMES["checkpoint"], model, "1.0"),
+        zd.package_metadata(_package_zip(tmp_path), "1.0"),
+    ]:
+        text = (meta["title"] + meta["description"]).replace(zd.REPO_URL, "")
+        assert "clara" not in text.lower()
+    assert all("clara" not in n for n in zd.UPLOAD_NAMES.values())
 
 
 def test_package_requires_the_checkpoint(tmp_path):
