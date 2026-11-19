@@ -89,6 +89,46 @@ def test_ifs_boundary_path_is_required(artifact):
     assert ex.value.code == 2
 
 
+def test_hindcast_sources(artifact: Path) -> None:
+    """DANRA initial states and an ERA5 boundary need no DINI or IFS path."""
+    argv = [
+        "--analysis-time", "1999-12-02T21:00",
+        "--artifact-path", str(artifact),
+    ]  # fmt: skip
+    environ = {
+        "CLARA_INITIAL_STATE_SOURCE": "danra",
+        "CLARA_BOUNDARY_SOURCE": "era5",
+    }
+    _, args, _ = run.parse_config(argv, environ)
+    forecast = run.Forecast(args)
+    assert forecast.boundary_path == run.ERA5_PATH
+    assert args.danra_root == run.DANRA_ROOT
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        # the IFS path is only for an IFS boundary
+        {"CLARA_BOUNDARY_SOURCE": "era5", "CLARA_IFS_BOUNDARY_PATH": IFS},
+        # the DINI root is only for DINI initial states
+        {
+            "CLARA_INITIAL_STATE_SOURCE": "danra",
+            "CLARA_IFS_BOUNDARY_PATH": IFS,
+            "CLARA_DINI_ROOT": "s3://bucket/dini/",
+        },
+        {"CLARA_BOUNDARY_SOURCE": "gfs"},
+    ],
+)
+def test_hindcast_source_errors(artifact: Path, environ: dict) -> None:
+    argv = [
+        "--analysis-time", "1999-12-02T21:00",
+        "--artifact-path", str(artifact),
+    ]  # fmt: skip
+    with pytest.raises(SystemExit) as ex:
+        run.parse_config(argv, environ)
+    assert ex.value.code == 2
+
+
 def test_missing_artifact(tmp_path):
     argv = ["--analysis-time", "2026-10-01T00:00"]
     environ = {

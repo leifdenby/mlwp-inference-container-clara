@@ -4,6 +4,10 @@ import pytest
 import xarray as xr
 
 from clara_inference import convert_output as co
+from clara_inference.input_sources import (
+    BOUNDARY_SOURCES,
+    INITIAL_STATE_SOURCES,
+)
 
 LEVELS = [100, 200, 400, 600, 700, 850, 925, 1000]
 
@@ -81,7 +85,11 @@ def test_clip_to_physical_ranges_only_if_asked(clip):
     # negative values too (swavr0m is feature 6)
     ds_pred["state"] = ds_pred.state - 10.0
     ds_sl, ds_pl = co.convert(
-        ds_pred, _grid(), np.datetime64("2026-10-26T06:00"), {"a": 1}, clip=clip
+        ds_pred,
+        _grid(),
+        np.datetime64("2026-10-26T06:00"),
+        {"a": 1},
+        clip=clip,
     )
     unclipped_sl, unclipped_pl = co.convert(
         ds_pred, _grid(), np.datetime64("2026-10-26T06:00"), {"a": 1}
@@ -99,3 +107,29 @@ def test_clip_to_physical_ranges_only_if_asked(clip):
     # other variables are never changed
     np.testing.assert_array_equal(ds_sl.t2m.values, unclipped_sl.t2m.values)
     np.testing.assert_array_equal(ds_pl.t.values, unclipped_pl.t.values)
+
+
+@pytest.mark.parametrize(
+    "initial_state_source, boundary_source",
+    [("dini", "ifs"), ("danra", "era5")],
+)
+def test_input_sources_in_the_attributes(
+    initial_state_source: str, boundary_source: str
+) -> None:
+    ds_pred, _ = _prediction(2)
+    for ds in co.convert(
+        ds_pred,
+        _grid(),
+        np.datetime64("2026-10-26T06:00"),
+        {"a": 1},
+        initial_state_source=initial_state_source,
+        boundary_source=boundary_source,
+    ):
+        assert ds.attrs["initial_state_source"] == (
+            INITIAL_STATE_SOURCES[initial_state_source]
+        )
+        assert ds.attrs["boundary_source"] == BOUNDARY_SOURCES[boundary_source]
+    # an ERA5 boundary is flagged as out of distribution
+    assert ("OUT OF DISTRIBUTION" in ds.attrs["boundary_source"]) == (
+        boundary_source == "era5"
+    )

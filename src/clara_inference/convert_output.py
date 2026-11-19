@@ -28,7 +28,8 @@ instead of 25), so it isn't copied.
 Usage:
     python -m clara_inference.convert_output --prediction inference_output.zarr \\
         --danra-grid inference_artifact/grids/danra_model1_config.grid.zarr \\
-        --interior-config inference_artifact/configs/danra_model1_config_ifs_finetune.yaml \\
+        --interior-config \\
+            inference_artifact/configs/danra_model1_config_ifs_finetune.yaml \\
         --analysis-time 2026-10-01T00:00 --output-dir outputs/
 """
 import argparse
@@ -40,6 +41,11 @@ import numpy as np
 import xarray as xr
 import yaml
 from loguru import logger
+
+from clara_inference.input_sources import (
+    BOUNDARY_SOURCES,
+    INITIAL_STATE_SOURCES,
+)
 
 SINGLE_LEVEL_VARS = [
     "pres_seasurface",
@@ -141,11 +147,18 @@ def clip_to_physical_ranges(ds):
 
 
 def convert(
-    ds_pred, ds_grid, analysis_time, projection_attrs, clip=False
+    ds_pred,
+    ds_grid,
+    analysis_time,
+    projection_attrs,
+    clip=False,
+    initial_state_source="dini",
+    boundary_source="ifs",
 ):
     """
     Split the predicted state features into single/pressure level datasets,
-    clipping the variables of PHYSICAL_RANGES if `clip`.
+    clipping the variables of PHYSICAL_RANGES if `clip`, and recording the
+    input sources (`input_sources`) in the attributes.
     """
     if ds_pred.start_time.size != 1:
         raise ValueError(
@@ -183,6 +196,8 @@ def convert(
         analysis_time=str(np.datetime64(analysis_time, "s")),
         start_time=str(ds_pred.start_time.values[0]),
         ensemble_size=int(da[MEMBER_DIM].size),
+        initial_state_source=INITIAL_STATE_SOURCES[initial_state_source],
+        boundary_source=BOUNDARY_SOURCES[boundary_source],
     )
 
     def _var(feature):
@@ -264,6 +279,18 @@ def main():
         + ", ".join(PHYSICAL_RANGES)
         + " to their physical ranges in the outputs",
     )
+    parser.add_argument(
+        "--initial-state-source",
+        choices=list(INITIAL_STATE_SOURCES),
+        default="dini",
+        help="recorded in the attributes (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--boundary-source",
+        choices=list(BOUNDARY_SOURCES),
+        default="ifs",
+        help="recorded in the attributes (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     ds_pred = xr.open_zarr(args.prediction)
@@ -274,6 +301,8 @@ def main():
         args.analysis_time,
         projection_cf_attrs(args.interior_config),
         clip=args.clip_to_physical_ranges,
+        initial_state_source=args.initial_state_source,
+        boundary_source=args.boundary_source,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name, ds in [("single_levels", ds_sl), ("pressure_levels", ds_pl)]:

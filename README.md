@@ -321,7 +321,8 @@ Without them, the build is skipped.
 subprocess:
 
 1. **`clara_inference.regrid_dini`:** regrids DINI to the DANRA grid at
-   3-hourly steps.
+   3-hourly steps (or `clara_inference.danra_interior` copies DANRA, for
+   [hindcasts](#hindcasts-danra-initial-states-and-era5-boundary)).
 2. **`clara_inference.create_inference_dataset`:** builds the inference
    datastores and the neural-lam config.
    - The interior is normalised with the DANRA training statistics.
@@ -386,8 +387,12 @@ variable, which wins over the default. This is the same convention as ANNA
 | `--analysis-time` | `CLARA_ANALYSIS_TIME` | (required) | DINI analysis time, ISO8601, e.g. `2026-10-01T06:00Z` |
 | `--forecast-duration` | `CLARA_FORECAST_DURATION` | `PT18H` | multiple of 3 h, at least 12 h |
 | `--ensemble-size` | `CLARA_ENSEMBLE_SIZE` | `5` | number of ensemble members |
-| `--ifs-boundary-path` | `CLARA_IFS_BOUNDARY_PATH` | (required) | IFS forecast zarr following the contract below (local or S3) |
+| `--ifs-boundary-path` | `CLARA_IFS_BOUNDARY_PATH` | (required with `--boundary-source ifs`) | IFS forecast zarr following the contract below (local or S3) |
 | `--dini-root` | `CLARA_DINI_ROOT` | `s3://harmonie-zarr/dini/control/{analysis}/` | DINI forecast zarrs |
+| `--initial-state-source` | `CLARA_INITIAL_STATE_SOURCE` | `dini` | `dini`, or `danra` for hindcasts (see [Hindcasts](#hindcasts-danra-initial-states-and-era5-boundary)) |
+| `--danra-root` | `CLARA_DANRA_ROOT` | `https://object-store.os-api.cci1.ecmwf.int/danra/v0.5.0/` | DANRA zarrs, with `--initial-state-source danra` |
+| `--boundary-source` | `CLARA_BOUNDARY_SOURCE` | `ifs` | `ifs`, or `era5` for hindcasts (**out of distribution**, see [Hindcasts](#hindcasts-danra-initial-states-and-era5-boundary)) |
+| `--era5-path` | `CLARA_ERA5_PATH` | `gs://weatherbench2/datasets/era5/1959-2022-6h-1440x721.zarr` | ERA5 zarr, with `--boundary-source era5` |
 | `--workdir` | `CLARA_WORKDIR` | `inference_workdir` | working directory; outputs go in `outputs/` |
 | `--artifact-path` | `CLARA_ARTIFACT_PATH` | `inference_artifact` | the inference artifact, including the checkpoint |
 | `--skip-completed` | `CLARA_SKIP_COMPLETED` | `false` | skip the stages already completed in the workdir |
@@ -437,6 +442,35 @@ that order, and the resulting boundary points are checked against the graph.
 
 [dev-utils/make_ifs_boundary_zarr.py](dev-utils/make_ifs_boundary_zarr.py)
 makes such a zarr from ECMWF open data. Open data is kept for a few days only.
+
+### Hindcasts: DANRA initial states and ERA5 boundary
+
+Past cases have neither a DINI forecast nor an IFS forecast in the open data.
+For those, the inputs can come from the datasets CLARA was trained with, read
+from the same places as in the training configs:
+
+- **`--initial-state-source danra`:** step 1 copies DANRA v0.5.0 itself, with
+  no regridding or conversion, for the analysis time, +3 h and the valid
+  times after it. The DANRA zarrs are chunked by 32 days, so a short forecast
+  still reads about 13 GB.
+- **`--boundary-source era5`:** the WeatherBench2 ERA5 analyses are laid out
+  as an IFS forecast from the same 00/12 UTC cycle, each lead time the
+  analysis at its valid time. neural-lam computes the boundary's time inputs
+  from valid times, so the model sees ERA5 at the same times as an analysis
+  boundary. The boundary config, the normalisation (ERA5 statistics) and the
+  point order are those of the IFS boundary.
+
+**ERA5 is out of distribution for this checkpoint.** It was pre-trained with
+an ERA5 boundary and then fine-tuned with IFS forecasts. The outputs say so
+in their `boundary_source` attribute, and record `initial_state_source`.
+
+```bash
+# the 3 December 1999 storm: initial states 1999-12-02T21Z and 03T00Z,
+# predictions 03T03Z .. 04T00Z
+uv run python -m clara_inference --artifact-path artifact/build/clara-exact-stats \
+    --analysis-time 1999-12-02T21:00Z --forecast-duration PT27H \
+    --initial-state-source danra --boundary-source era5 --ensemble-size 10
+```
 
 ### Outputs and conventions
 

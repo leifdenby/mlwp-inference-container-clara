@@ -16,8 +16,16 @@ def _have_aws_credentials():
 
 
 def open_zarr(path, **kwargs):
-    """`xr.open_zarr`, anonymous for S3 without AWS credentials."""
+    """
+    `xr.open_zarr`, anonymous for S3 without AWS credentials, and for Google
+    Cloud Storage (public WeatherBench2 data).
+    """
     path = str(path)
+    if path.startswith("gs://"):
+        kwargs["storage_options"] = {
+            **kwargs.get("storage_options", {}),
+            "token": "anon",
+        }
     if path.startswith("s3://") and not _have_aws_credentials():
         logger.info(f"no AWS credentials, reading {path} anonymously")
         kwargs["storage_options"] = {
