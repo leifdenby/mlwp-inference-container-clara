@@ -95,6 +95,7 @@ def add_panel(
     da: xr.DataArray,
     label: str,
     style: dict,
+    label_at_bottom: bool = False,
 ):
     """
     Add a map panel of a field on the DANRA grid, labelled inside.
@@ -111,6 +112,8 @@ def add_panel(
         The panel label.
     style : dict
         pcolormesh colour arguments.
+    label_at_bottom : bool, optional
+        Put the label at the bottom left instead of the top left.
 
     Returns
     -------
@@ -138,11 +141,11 @@ def add_panel(
     ax.spines["geo"].set_visible(False)
     ax.text(
         0.02,
-        0.97,
+        0.03 if label_at_bottom else 0.97,
         label,
         transform=ax.transAxes,
         ha="left",
-        va="top",
+        va="bottom" if label_at_bottom else "top",
         fontsize=FONT,
         color=WHITE,
         bbox=dict(boxstyle="round,pad=0.2", fc="black", ec="none", alpha=0.45),
@@ -150,9 +153,14 @@ def add_panel(
     return mesh
 
 
-def add_colorbar(fig: plt.Figure, rect: list[float], style: dict) -> None:
+def add_colorbar(
+    fig: plt.Figure,
+    rect: list[float],
+    style: dict,
+    label: str = "net shortwave radiation at the surface (W/m²)",
+) -> None:
     """
-    Add the slim horizontal colour bar of the short-wave flux.
+    Add a slim horizontal colour bar (by default of the short-wave flux).
 
     Parameters
     ----------
@@ -162,16 +170,14 @@ def add_colorbar(fig: plt.Figure, rect: list[float], style: dict) -> None:
         The colour bar position [left, bottom, width, height].
     style : dict
         The colour arguments of the panels.
+    label : str, optional
+        The colour bar label.
     """
     sm = plt.cm.ScalarMappable(
         norm=Normalize(style["vmin"], style["vmax"]), cmap=style["cmap"]
     )
     cb = fig.colorbar(sm, cax=fig.add_axes(rect), orientation="horizontal")
-    cb.set_label(
-        "net shortwave radiation at the surface (W/m²)",
-        fontsize=FONT,
-        color=INK,
-    )
+    cb.set_label(label, fontsize=FONT, color=INK)
     cb.ax.tick_params(labelsize=FONT, colors=INK, length=3)
     cb.outline.set_visible(False)
 
@@ -250,7 +256,10 @@ def convert_figure_to_image(fig: plt.Figure) -> Image.Image:
 
 
 def save_gif(
-    frames: list[Image.Image], durations: list[int], fp: Path
+    frames: list[Image.Image],
+    durations: list[int],
+    fp: Path,
+    colors: int = 256,
 ) -> None:
     """
     Save frames as a looping GIF with one shared colour palette.
@@ -263,12 +272,14 @@ def save_gif(
         Display time of each frame (ms).
     fp : Path
         The GIF to write.
+    colors : int, optional
+        Palette size (fewer colours compress better).
     """
     thumbs = [f.reduce(4) for f in frames]
     sheet = Image.new("RGB", (thumbs[0].width, thumbs[0].height * len(thumbs)))
     for k, thumb in enumerate(thumbs):
         sheet.paste(thumb, (0, k * thumb.height))
-    palette = sheet.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+    palette = sheet.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
     frames_p = [
         f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames
     ]
