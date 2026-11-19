@@ -458,12 +458,21 @@ def plot_timeseries(
         ax.legend(fontsize=12, frameon=False, labelcolor=INK)
     fig.text(
         0.06,
-        0.95,
+        0.96,
         f"{case_name}: CLARA from {str(init_time)[:13]}Z "
-        f"({ds_clara.sizes[MEMBER]} members; {describe_inputs(ds_clara)}) "
-        "and DANRA, land points of Denmark",
+        f"({ds_clara.sizes[MEMBER]} members) and DANRA, land points of "
+        "Denmark",
         color=INK,
         fontsize=15,
+        ha="left",
+        va="top",
+    )
+    fig.text(
+        0.06,
+        0.91,
+        f"CLARA: {describe_inputs(ds_clara)}",
+        color=INK_2,
+        fontsize=12,
         ha="left",
         va="top",
     )

@@ -33,8 +33,9 @@ to neural-lam.
 
 For past cases without an IFS forecast, `era5_as_forecast` lays ERA5
 (WeatherBench2, the ERA5 of the pre-training boundary and of the boundary
-statistics) out as a forecast in this contract: from the same cycle, with
-each lead time the ERA5 analysis at its valid time. The boundary datastore
+statistics) out as a forecast in this contract: from the latest 00/12 UTC cycle at
+least 6 h before the analysis time, with each lead time the ERA5 analysis at
+its valid time. The boundary datastore
 config, normalisation and point order are those of the IFS boundary. The
 checkpoint was fine-tuned with IFS forecasts, so this is out of
 distribution.
@@ -130,8 +131,10 @@ def era5_as_forecast(
     Lay out ERA5 analyses as the boundary forecast of the contract, for
     hindcasts of past cases.
 
-    The forecast is from the cycle `select_cycle` would choose, with the
-    lead times neural-lam needs, each the ERA5 analysis at its valid time.
+    The forecast is from the latest 00/12 UTC cycle at least 6 h before
+    `analysis_time` (so that neural-lam keeps the first initial state), with
+    the lead times neural-lam needs, each the ERA5 analysis at its valid
+    time.
     neural-lam computes the boundary's time inputs from valid times, so this
     gives the model ERA5 at the same valid times as an analysis boundary
     would. NB: the checkpoint was fine-tuned with an IFS forecast boundary,
@@ -158,15 +161,22 @@ def era5_as_forecast(
     ValueError
         If ERA5 doesn't have all the valid times needed.
     """
-    # the 00/12 UTC cycles of the day of analysis_time - 3 h and the day
-    # before, of which select_cycle picks the latest at or before it
-    day = np.datetime64((analysis_time - INTERIOR_STEP).date(), "ns")
-    candidate_cycles = [
-        day + np.timedelta64(days, "D") + np.timedelta64(hour, "h")
-        for days in (-1, 0)
-        for hour in CYCLE_HOURS
-    ]
-    cycle = select_cycle(candidate_cycles, analysis_time)
+    # the latest 00/12 UTC cycle at or before analysis_time - 6 h. neural-lam
+    # crops interior times that have no full 6 h boundary step before them
+    # in the (single cycle) boundary, so select_cycle's cycle, 3 h before a
+    # 03/15 UTC analysis time, would lose the first initial state. With
+    # ERA5 the cycle only sets the first valid time (the inputs are the
+    # same), and select_cycle picks this cycle when it is the only one
+    latest = np.datetime64(analysis_time - LEAD_STEP, "ns")
+    day = latest.astype("datetime64[D]").astype("datetime64[ns]")
+    candidate_cycles = np.array(
+        [
+            day + np.timedelta64(days, "D") + np.timedelta64(hour, "h")
+            for days in (-1, 0)
+            for hour in CYCLE_HOURS
+        ]
+    )
+    cycle = candidate_cycles[candidate_cycles <= latest].max()
     leads = required_lead_times(cycle, analysis_time, forecast_duration)
     valid_times = cycle + leads
     missing = sorted(

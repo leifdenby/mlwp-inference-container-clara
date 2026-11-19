@@ -57,7 +57,7 @@ def _create_era5(n_days: int = 5) -> xr.Dataset:
 def test_era5_as_forecast_matches_the_valid_times() -> None:
     analysis_time = datetime.datetime(1999, 12, 2, 21)
     ds_forecast = ib.era5_as_forecast(_create_era5(), analysis_time, 27 * H)
-    # the cycle the IFS boundary would use: latest 00/12 at or before 18Z
+    # the latest 00/12 cycle at or before analysis time - 6 h (15Z)
     np.testing.assert_array_equal(
         ds_forecast.time.values, [np.datetime64("1999-12-02T12:00", "ns")]
     )
@@ -81,9 +81,12 @@ def test_era5_as_forecast_matches_the_valid_times() -> None:
 @pytest.mark.parametrize(
     "analysis_time, cycle",
     [
-        (datetime.datetime(1999, 12, 3, 3), "1999-12-03T00:00"),
+        # 03/15 UTC: a 6 h boundary step before the first initial state
+        (datetime.datetime(1999, 12, 3, 3), "1999-12-02T12:00"),
+        (datetime.datetime(1999, 12, 3, 15), "1999-12-03T00:00"),
         (datetime.datetime(1999, 12, 3, 0), "1999-12-02T12:00"),
-        (datetime.datetime(1999, 12, 3, 15), "1999-12-03T12:00"),
+        (datetime.datetime(1999, 12, 3, 6), "1999-12-03T00:00"),
+        (datetime.datetime(1999, 12, 3, 21), "1999-12-03T12:00"),
     ],
 )
 def test_era5_as_forecast_cycle(
@@ -91,6 +94,11 @@ def test_era5_as_forecast_cycle(
 ) -> None:
     ds_forecast = ib.era5_as_forecast(_create_era5(), analysis_time, 12 * H)
     assert ds_forecast.time.values[0] == np.datetime64(cycle, "ns")
+    # neural-lam keeps the first initial state (no cropping)
+    first_valid = ds_forecast.time.values[0]
+    assert np.datetime64(analysis_time, "ns") >= first_valid + np.timedelta64(
+        ib.LEAD_STEP
+    )
     # and prepare_boundary_input picks the same cycle
     assert ib.select_cycle(ds_forecast.time.values, analysis_time) == (
         np.datetime64(cycle, "ns")
