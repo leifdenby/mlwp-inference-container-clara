@@ -19,6 +19,12 @@ Steps, each run as a subprocess:
                                           (clara_inference.convert_output)
   5. optionally, upload the outputs to S3 (clara_inference.upload_outputs)
 
+For hindcasts of past cases, the initial states can be taken from DANRA
+instead of DINI (`--initial-state-source danra`, step 1 then copies DANRA,
+clara_inference.danra_interior) and the boundary from ERA5 instead of IFS
+(`--boundary-source era5`, out of distribution for the IFS-fine-tuned
+checkpoint). The outputs record both sources.
+
 Outputs: {workdir}/outputs/{single_levels,pressure_levels}.zarr
 
 Exit codes: 0 success, 2 configuration error, 1 a failed step.
@@ -39,6 +45,12 @@ from loguru import logger
 
 import clara_inference
 from clara_inference import envargs
+from clara_inference.input_sources import (
+    BOUNDARY_SOURCES,
+    DANRA_ROOT,
+    ERA5_PATH,
+    INITIAL_STATE_SOURCES,
+)
 
 ENV_PREFIX = "CLARA"
 DEFAULT_DINI_ROOT = "s3://harmonie-zarr/dini/control/{analysis}/"
@@ -108,8 +120,8 @@ def build_parser():
         "--analysis-time",
         required=True,
         type=parse_analysis_time,
-        help="DINI analysis time, ISO8601, e.g. 2026-10-01T06:00Z (UTC if "
-        "no timezone)",
+        help="DINI analysis time (the first initial state; the second is 3h "
+        "later), ISO8601, e.g. 2026-10-01T06:00Z (UTC if no timezone)",
     )
     parser.add_argument(
         "--forecast-duration",
@@ -127,14 +139,43 @@ def build_parser():
     )
     parser.add_argument(
         "--ifs-boundary-path",
-        required=True,
         help="IFS forecast zarr (local or S3) following the contract in "
         "clara_inference/ifs_boundary.py; the latest 00/12 UTC cycle at or "
-        "before analysis time - 3h is used",
+        "before analysis time - 3h is used. Required with --boundary-source "
+        "ifs",
     )
     parser.add_argument(
         "--dini-root",
         help=f"DINI forecast zarr root (default: {DEFAULT_DINI_ROOT})",
+    )
+    parser.add_argument(
+        "--initial-state-source",
+        choices=list(INITIAL_STATE_SOURCES),
+        default="dini",
+        help="dini: a DINI control forecast regridded to the DANRA grid; "
+        "danra: DANRA itself, for hindcasts of past cases (default: "
+        "%(default)s)",
+    )
+    parser.add_argument(
+        "--danra-root",
+        default=DANRA_ROOT,
+        help="DANRA zarrs root, with --initial-state-source danra (default: "
+        "%(default)s)",
+    )
+    parser.add_argument(
+        "--boundary-source",
+        choices=list(BOUNDARY_SOURCES),
+        default="ifs",
+        help="ifs: an IFS forecast (--ifs-boundary-path), as in fine-tuning; "
+        "era5: ERA5 analyses laid out as a forecast, for hindcasts of past "
+        "cases (out of distribution for the checkpoint) (default: "
+        "%(default)s)",
+    )
+    parser.add_argument(
+        "--era5-path",
+        default=ERA5_PATH,
+        help="ERA5 (WeatherBench2) zarr, with --boundary-source era5 "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--workdir",
@@ -215,6 +256,18 @@ def parse_config(argv=None, environ=None):
             "--output-s3-endpoint-url/--output-aws-profile need "
             "--output-s3-prefix (nothing is uploaded without it)"
         )
+    if args.boundary_source == "ifs" and not args.ifs_boundary_path:
+        parser.error(
+            "--ifs-boundary-path is required with --boundary-source ifs"
+        )
+    if args.boundary_source != "ifs" and args.ifs_boundary_path:
+        parser.error(
+            "--ifs-boundary-path is only used with --boundary-source ifs"
+        )
+    if args.initial_state_source != "dini" and args.dini_root:
+        parser.error(
+            "--dini-root is only used with --initial-state-source dini"
+        )
     if args.dini_root is None:
         compact = f"{args.analysis_time:%Y-%m-%dT%H%M%SZ}"
         args.dini_root = DEFAULT_DINI_ROOT.format(analysis=compact)
@@ -294,10 +347,18 @@ class Forecast:
             return True
         return False
 
+    @property
+    def boundary_path(self):
+        """The IFS forecast zarr, or the ERA5 zarr for an ERA5 boundary."""
+        if self.args.boundary_source == "ifs":
+            return self.args.ifs_boundary_path
+        return self.args.era5_path
+
     def mark_completed(self, path):
         (path / ".completed").write_text(
             f"{self.analysis_iso} {self.duration_iso} "
-            f"{self.args.ifs_boundary_path}\n"
+            f"{self.args.initial_state_source} {self.args.boundary_source} "
+            f"{self.boundary_path}\n"
         )
 
     def checkpoint(self):
@@ -310,14 +371,30 @@ class Forecast:
             )
         return checkpoint
 
-    def regrid(self):
+    def prepare_interior(self):
+        """Step 1: regrid DINI, or copy DANRA (--initial-state-source)."""
         inputs = self.workdir / "inputs"
-        if self.completed(inputs, "the regridding"):
+        if self.completed(inputs, "the interior inputs"):
             return
         (inputs / ".completed").unlink(missing_ok=True)
-        self.run_step(
-            "1. regrid DINI",
-            [
+        if self.args.initial_state_source == "danra":
+            name = "1. DANRA interior"
+            cmd = [
+                sys.executable,
+                "-m",
+                "clara_inference.danra_interior",
+                "--analysis-time",
+                self.analysis_iso,
+                "--forecast-duration",
+                self.duration_iso,
+                "--danra-root",
+                self.args.danra_root,
+                "--output",
+                inputs,
+            ]
+        else:
+            name = "1. regrid DINI"
+            cmd = [
                 sys.executable,
                 "-m",
                 "clara_inference.regrid_dini",
@@ -330,9 +407,8 @@ class Forecast:
                 self.duration_iso,
                 "--output",
                 inputs,
-            ],
-            env=self.step_env("input"),
-        )
+            ]
+        self.run_step(name, cmd, env=self.step_env("input"))
         self.mark_completed(inputs)
 
     def create_datastores(self):
@@ -350,8 +426,10 @@ class Forecast:
                 self.artifact,
                 "--interior-dir",
                 self.workdir / "inputs",
-                "--ifs-boundary",
-                self.args.ifs_boundary_path,
+                "--boundary-source",
+                self.args.boundary_source,
+                "--boundary-path",
+                self.boundary_path,
                 "--analysis-time",
                 self.analysis_iso,
                 "--forecast-duration",
@@ -453,6 +531,10 @@ class Forecast:
                 self.analysis_iso,
                 "--output-dir",
                 self.workdir / "outputs",
+                "--initial-state-source",
+                self.args.initial_state_source,
+                "--boundary-source",
+                self.args.boundary_source,
             ]
             + (
                 ["--clip-to-physical-ranges"]
@@ -490,7 +572,7 @@ class Forecast:
             )
         log_device()
         checkpoint = self.checkpoint()
-        self.regrid()
+        self.prepare_interior()
         self.create_datastores()
         prediction = self.forecast(checkpoint)
         self.convert(prediction)

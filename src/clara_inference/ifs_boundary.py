@@ -29,6 +29,16 @@ So in training, a forecast from T used the latest 00/12 UTC cycle at or
 before T - 3 h; `select_cycle` picks that cycle, and only that cycle is given
 to neural-lam.
 
+## ERA5 instead of IFS (hindcasts)
+
+For past cases without an IFS forecast, `era5_as_forecast` lays ERA5
+(WeatherBench2, the ERA5 of the pre-training boundary and of the boundary
+statistics) out as a forecast in this contract: from the same cycle, with
+each lead time the ERA5 analysis at its valid time. The boundary datastore
+config, normalisation and point order are those of the IFS boundary. The
+checkpoint was fine-tuned with IFS forecasts, so this is out of
+distribution.
+
 ## Point order
 
 neural-lam's boundary nodes are the boundary datastore's grid points in
@@ -88,9 +98,7 @@ def select_cycle(cycles, analysis_time):
     """
     latest = np.datetime64(analysis_time - INTERIOR_STEP, "ns")
     cycles = np.asarray(cycles, dtype="datetime64[ns]")
-    hours = (cycles - cycles.astype("datetime64[D]")) // np.timedelta64(
-        1, "h"
-    )
+    hours = (cycles - cycles.astype("datetime64[D]")) // np.timedelta64(1, "h")
     usable = cycles[(cycles <= latest) & np.isin(hours, CYCLE_HOURS)]
     if usable.size == 0:
         raise ValueError(
@@ -111,6 +119,75 @@ def required_lead_times(cycle, analysis_time, forecast_duration):
     step = np.timedelta64(LEAD_STEP, "ns")
     n = int(np.ceil((last_interior - cycle) / step)) + BOUNDARY_EXTRA_STEPS
     return np.arange(n + 1) * step
+
+
+def era5_as_forecast(
+    ds_era5: xr.Dataset,
+    analysis_time: datetime.datetime,
+    forecast_duration: datetime.timedelta,
+) -> xr.Dataset:
+    """
+    Lay out ERA5 analyses as the boundary forecast of the contract, for
+    hindcasts of past cases.
+
+    The forecast is from the cycle `select_cycle` would choose, with the
+    lead times neural-lam needs, each the ERA5 analysis at its valid time.
+    neural-lam computes the boundary's time inputs from valid times, so this
+    gives the model ERA5 at the same valid times as an analysis boundary
+    would. NB: the checkpoint was fine-tuned with an IFS forecast boundary,
+    so an ERA5 boundary is out of distribution.
+
+    Parameters
+    ----------
+    ds_era5 : xr.Dataset
+        ERA5 in WeatherBench2 layout (dims `time`, `latitude`, `longitude`
+        and `level`), with the variables of the contract.
+    analysis_time : datetime.datetime
+        The time of the first initial state (naive UTC).
+    forecast_duration : datetime.timedelta
+        The forecast duration from `analysis_time`.
+
+    Returns
+    -------
+    xr.Dataset
+        The contract layout: dims `time` (the one cycle),
+        `prediction_timedelta`, `latitude`, `longitude` and `level`.
+
+    Raises
+    ------
+    ValueError
+        If ERA5 doesn't have all the valid times needed.
+    """
+    # the 00/12 UTC cycles of the day of analysis_time - 3 h and the day
+    # before, of which select_cycle picks the latest at or before it
+    day = np.datetime64((analysis_time - INTERIOR_STEP).date(), "ns")
+    candidate_cycles = [
+        day + np.timedelta64(days, "D") + np.timedelta64(hour, "h")
+        for days in (-1, 0)
+        for hour in CYCLE_HOURS
+    ]
+    cycle = select_cycle(candidate_cycles, analysis_time)
+    leads = required_lead_times(cycle, analysis_time, forecast_duration)
+    valid_times = cycle + leads
+    missing = sorted(
+        set(valid_times.tolist()) - set(ds_era5.time.values.tolist())
+    )
+    if missing:
+        raise ValueError(
+            "ERA5 has no valid times "
+            f"{[str(np.datetime64(m, 'ns'))[:16] for m in missing]}, needed "
+            f"for a {forecast_duration} forecast from {analysis_time}"
+        )
+    ds = ds_era5[SL_VARS + PL_VARS].sel(time=valid_times, level=LEVELS)
+    ds = ds.rename(time="prediction_timedelta").assign_coords(
+        prediction_timedelta=leads
+    )
+    ds = ds.expand_dims(time=[cycle])
+    logger.info(
+        f"ERA5 boundary as a forecast from {str(cycle)[:16]}: valid times "
+        f"{str(valid_times[0])[:16]} .. {str(valid_times[-1])[:16]}"
+    )
+    return ds
 
 
 def check_contract(ds):
@@ -163,9 +240,12 @@ def prepare_boundary_input(ds, ds_grid, analysis_time, forecast_duration):
         set(leads.tolist()) - set(ds.prediction_timedelta.values.tolist())
     )
     if missing:
+        missing_h = [
+            str(np.timedelta64(m, "ns").astype("timedelta64[h]"))
+            for m in missing
+        ]
         raise ValueError(
-            f"the IFS cycle {str(cycle)[:16]} has no lead times "
-            f"{[str(np.timedelta64(m, 'ns').astype('timedelta64[h]')) for m in missing]}"
+            f"the IFS cycle {str(cycle)[:16]} has no lead times {missing_h}"
             f", needed for a {forecast_duration} forecast from "
             f"{analysis_time} (lead times every 6 h up to "
             f"{leads[-1].astype('timedelta64[h]')})"

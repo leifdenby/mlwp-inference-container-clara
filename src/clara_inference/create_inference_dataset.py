@@ -54,6 +54,7 @@ from loguru import logger
 from clara_inference import ifs_boundary, storage
 from clara_inference.artifact.layout import stats_datastore_path
 from clara_inference.convert_output import projection_crs
+from clara_inference.input_sources import BOUNDARY_SOURCES
 from clara_inference.model_configs import (
     inference_neural_lam_config,
     training_configs,
@@ -161,10 +162,48 @@ def _create_interior_datastore(
     return fp_config
 
 
+def _open_boundary_forecast(
+    boundary_path: str,
+    boundary_source: str,
+    analysis_time: datetime.datetime,
+    forecast_duration: datetime.timedelta,
+) -> xr.Dataset:
+    """
+    Open the boundary forecast in the layout of the IFS boundary contract.
+
+    Parameters
+    ----------
+    boundary_path : str
+        The IFS forecast zarr (`boundary_source` "ifs") or the ERA5
+        (WeatherBench2) zarr ("era5").
+    boundary_source : str
+        "ifs" or "era5" (see `input_sources.BOUNDARY_SOURCES`).
+    analysis_time : datetime.datetime
+        The time of the first initial state.
+    forecast_duration : datetime.timedelta
+        The forecast duration from `analysis_time`.
+
+    Returns
+    -------
+    xr.Dataset
+        The boundary forecast (contract layout, lazy).
+    """
+    if boundary_source == "ifs":
+        return storage.open_zarr(boundary_path, decode_timedelta=True)
+    if boundary_source == "era5":
+        return ifs_boundary.era5_as_forecast(
+            storage.open_zarr(boundary_path),
+            analysis_time,
+            forecast_duration,
+        )
+    raise ValueError(f"unknown boundary source {boundary_source!r}")
+
+
 def _create_boundary_datastore(
     artifact,
     configs,
-    fp_ifs,
+    boundary_path,
+    boundary_source,
     fp_interior_config,
     analysis_time,
     forecast_duration,
@@ -175,11 +214,16 @@ def _create_boundary_datastore(
         artifact / "grids" / f"{name}.grid.zarr", decode_timedelta=True
     ).load()
     ds_input = ifs_boundary.prepare_boundary_input(
-        storage.open_zarr(fp_ifs, decode_timedelta=True),
+        _open_boundary_forecast(
+            boundary_path, boundary_source, analysis_time, forecast_duration
+        ),
         ds_grid,
         analysis_time,
         forecast_duration,
     )
+    ds_input.attrs["boundary_source"] = BOUNDARY_SOURCES[boundary_source]
+    if boundary_source != "ifs":
+        logger.warning(f"boundary: {BOUNDARY_SOURCES[boundary_source]}")
     fp_input = workdir / f"{name}.input.zarr"
     ds_input.to_zarr(fp_input, mode="w", consolidated=True)
 
@@ -261,10 +305,11 @@ def _create_neural_lam_config(
 def create_inference_datasets(
     artifact,
     interior_dir,
-    ifs_boundary_path,
+    boundary_path,
     analysis_time,
     forecast_duration,
     workdir,
+    boundary_source="ifs",
 ):
     artifact, interior_dir, workdir = (
         Path(artifact),
@@ -294,7 +339,8 @@ def create_inference_datasets(
     fp_boundary_config = _create_boundary_datastore(
         artifact,
         configs,
-        ifs_boundary_path,
+        boundary_path,
+        boundary_source,
         fp_interior_config,
         analysis_time,
         forecast_duration,
@@ -334,12 +380,21 @@ def main():
         "--interior-dir",
         required=True,
         type=Path,
-        help="regrid_dini.py output",
+        help="regrid_dini.py (or danra_interior.py) output",
     )
     parser.add_argument(
+        "--boundary-source",
+        choices=list(BOUNDARY_SOURCES),
+        default="ifs",
+        help="ifs: an IFS forecast; era5: ERA5 analyses laid out as a "
+        "forecast (hindcasts, out of distribution) (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--boundary-path",
         "--ifs-boundary",
         required=True,
-        help="IFS forecast zarr (contract in ifs_boundary.py)",
+        help="IFS forecast zarr (contract in ifs_boundary.py), or the ERA5 "
+        "(WeatherBench2) zarr with --boundary-source era5",
     )
     parser.add_argument(
         "--analysis-time",
@@ -359,7 +414,8 @@ def main():
     create_inference_datasets(
         artifact=args.artifact,
         interior_dir=args.interior_dir,
-        ifs_boundary_path=args.ifs_boundary,
+        boundary_path=args.boundary_path,
+        boundary_source=args.boundary_source,
         analysis_time=args.analysis_time,
         forecast_duration=args.forecast_duration,
         workdir=args.workdir,
