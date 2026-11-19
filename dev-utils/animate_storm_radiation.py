@@ -1,14 +1,19 @@
 """
-Animation (GIF) of the cloud cover in a CLARA storm hindcast, compared with
-DANRA, from its workdir (as for `plot_storm_hindcast.py`).
+Animation (GIF) of the surface radiation (cloud cover) in a CLARA hindcast,
+compared with DANRA, from its workdir (as for `plot_storm_hindcast.py`).
 
-The cloud cover is shown by the net surface long-wave radiation flux
-(`lwavr0m`, instantaneous): about -130 W/m2 under a clear sky, close to 0
-under thick low cloud. It is drawn in greys with cloud white, like a
-satellite image. (The short-wave flux would only show the few daylight hours
-of a winter case.) Panels in a 2x2 grid: DANRA, the ensemble mean and two
-members, one frame per valid time of the forecast. The ensemble mean is
-smoother than any member, as for all ensemble means.
+- `--variable lwavr0m` (default, `<prefix>_clouds.gif`): the net surface
+  long-wave radiation flux (instantaneous), about -130 W/m2 under a clear
+  sky and close to 0 under thick low cloud, so it shows the cloud cover at
+  all hours. Drawn in greys with cloud white, like a satellite image.
+- `--variable swavr0m` (`<prefix>_shortwave.gif`): the net surface
+  short-wave radiation flux, in the colours of the paper's Fig. 20 (plasma,
+  0-400 W/m2). Dark under cloud, and at night.
+
+Panels in a 2x2 grid: DANRA, the ensemble mean and two members, one frame
+per valid time of the forecast. The ensemble mean is smoother than any
+member, as for all ensemble means. All frames share one colour palette (the
+most widely supported GIF form).
 
 Usage, e.g. for the 3 December 1999 storm:
 
@@ -36,25 +41,40 @@ from plot_storm_hindcast import (
     describe_inputs,
 )
 
-LW_STYLE = dict(cmap="Greys_r", vmin=-130.0, vmax=0.0)
+VARIABLES = {
+    "lwavr0m": dict(
+        name="clouds",
+        style=dict(cmap="Greys_r", vmin=-130.0, vmax=0.0),
+        label="net surface long-wave radiation (W/m²)\n"
+        "white: cloudy, dark: clear sky",
+    ),
+    "swavr0m": dict(
+        name="shortwave",
+        style=dict(cmap="plasma", vmin=0.0, vmax=400.0),
+        label="net surface short-wave radiation (W/m²)\n"
+        "dark: cloudy (or night)",
+    ),
+}
 FIGSIZE = (16, 9)
 DPI = 100
 FRAME_MS = 800
 LAST_FRAME_MS = 2400
 
 
-def draw_longwave(ax: plt.Axes, da_lw: xr.DataArray, title: str):
+def draw_radiation(ax: plt.Axes, da: xr.DataArray, title: str, style: dict):
     """
-    Draw the net surface long-wave radiation flux.
+    Draw a radiation flux field.
 
     Parameters
     ----------
     ax : plt.Axes
         Map axes in the DANRA projection.
-    da_lw : xr.DataArray
-        Net surface long-wave radiation flux (W/m2), dims (y, x).
+    da : xr.DataArray
+        The flux (W/m2), dims (y, x).
     title : str
         Panel title.
+    style : dict
+        pcolormesh colour arguments (cmap, vmin, vmax).
 
     Returns
     -------
@@ -62,13 +82,13 @@ def draw_longwave(ax: plt.Axes, da_lw: xr.DataArray, title: str):
         The mesh (for the colour bar).
     """
     mesh = ax.pcolormesh(
-        da_lw.x.values,
-        da_lw.y.values,
-        da_lw.transpose("y", "x").values,
+        da.x.values,
+        da.y.values,
+        da.transpose("y", "x").values,
         transform=DANRA_CRS,
         shading="auto",
         rasterized=True,
-        **LW_STYLE,
+        **style,
     )
     ax.set_title(title, color=INK, fontsize=14, loc="left")
     return mesh
@@ -77,6 +97,7 @@ def draw_longwave(ax: plt.Axes, da_lw: xr.DataArray, title: str):
 def render_frame(
     panels: list[tuple[str, xr.DataArray]],
     title: str,
+    variable: str,
     full_domain: bool,
 ) -> Image.Image:
     """
@@ -85,9 +106,11 @@ def render_frame(
     Parameters
     ----------
     panels : list[tuple[str, xr.DataArray]]
-        Four (title, long-wave flux) pairs.
+        Four (title, flux) pairs.
     title : str
         The frame's title.
+    variable : str
+        The variable (a key of VARIABLES), for the colours and label.
     full_domain : bool
         Show the whole DANRA domain instead of the Denmark-centred map.
 
@@ -100,7 +123,7 @@ def render_frame(
     # the maps are about as wide as tall, so the panels are centred with
     # the colour bar next to them
     width, height = 0.30, 0.40
-    for k, (panel_title, da_lw) in enumerate(panels):
+    for k, (panel_title, da) in enumerate(panels):
         row, col = divmod(k, 2)
         ax = add_map_axes(
             fig, [0.17 + col * 0.31, 0.475 - row * 0.445, width, height]
@@ -108,25 +131,22 @@ def render_frame(
         if full_domain:
             ax.set_extent(
                 [
-                    float(da_lw.x.min()),
-                    float(da_lw.x.max()),
-                    float(da_lw.y.min()),
-                    float(da_lw.y.max()),
+                    float(da.x.min()),
+                    float(da.x.max()),
+                    float(da.y.min()),
+                    float(da.y.max()),
                 ],
                 crs=DANRA_CRS,
             )
-        mesh = draw_longwave(ax, da_lw, panel_title)
+        mesh = draw_radiation(
+            ax, da, panel_title, VARIABLES[variable]["style"]
+        )
     cb = fig.colorbar(
         mesh,
         cax=fig.add_axes([0.80, 0.12, 0.012, 0.70]),
         orientation="vertical",
     )
-    cb.set_label(
-        "net surface long-wave radiation (W/m²)\n"
-        "white: cloudy, dark: clear sky",
-        color=INK_2,
-        fontsize=11,
-    )
+    cb.set_label(VARIABLES[variable]["label"], color=INK_2, fontsize=11)
     cb.ax.tick_params(colors=INK_2, labelsize=10)
     cb.outline.set_edgecolor(GRID)
     fig.text(0.5, 0.975, title, color=INK, fontsize=15, ha="center", va="top")
@@ -137,16 +157,50 @@ def render_frame(
     return Image.open(buffer).convert("RGB")
 
 
-def animate_longwave(
+def save_gif(frames: list[Image.Image], fp: Path) -> None:
+    """
+    Save frames as a looping GIF with one shared colour palette.
+
+    Parameters
+    ----------
+    frames : list[Image.Image]
+        The frames (RGB).
+    fp : Path
+        The GIF to write.
+    """
+    # the palette from all frames side by side (subsampled), so that every
+    # frame's colours are in it; without dithering for clean fields
+    thumbs = [f.reduce(4) for f in frames]
+    sheet = Image.new("RGB", (thumbs[0].width, thumbs[0].height * len(thumbs)))
+    for k, thumb in enumerate(thumbs):
+        sheet.paste(thumb, (0, k * thumb.height))
+    palette = sheet.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+    frames_p = [
+        f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames
+    ]
+    durations = [FRAME_MS] * (len(frames_p) - 1) + [LAST_FRAME_MS]
+    frames_p[0].save(
+        fp,
+        save_all=True,
+        append_images=frames_p[1:],
+        duration=durations,
+        loop=0,
+        optimize=False,
+        disposal=1,
+    )
+
+
+def animate_radiation(
     ds_clara: xr.Dataset,
     ds_danra: xr.Dataset,
+    variable: str,
     members: list[int],
     fp: Path,
     case_name: str,
     full_domain: bool = False,
 ) -> None:
     """
-    Animate the cloud cover (net long-wave flux) for all forecast times.
+    Animate a radiation flux (cloud cover) for all forecast times.
 
     Parameters
     ----------
@@ -154,6 +208,8 @@ def animate_longwave(
         CLARA single levels (`outputs/single_levels.zarr`).
     ds_danra : xr.Dataset
         DANRA single levels on the same grid.
+    variable : str
+        `lwavr0m` or `swavr0m` (a key of VARIABLES).
     members : list[int]
         The two members to show (0-based).
     fp : Path
@@ -168,8 +224,8 @@ def animate_longwave(
     analysis_time = np.datetime64(ds_clara.attrs["analysis_time"])
     # the forecast is initialised from the states at T and T + 3 h
     init_time = analysis_time + np.timedelta64(3, "h")
-    da_clara = ds_clara.lwavr0m
-    da_danra = ds_danra.lwavr0m.sel(time=ds_clara.time)
+    da_clara = ds_clara[variable]
+    da_danra = ds_danra[variable].sel(time=ds_clara.time)
     if not full_domain:
         da_clara, da_danra = crop_to_map(da_clara), crop_to_map(da_danra)
     da_clara, da_danra = da_clara.load(), da_danra.load()
@@ -187,18 +243,10 @@ def animate_longwave(
             f"{str(init_time)[:13]}Z ({ds_clara.sizes[MEMBER]} members; "
             f"{describe_inputs(ds_clara)})"
         )
-        frames.append(render_frame(panels, title, full_domain))
+        frames.append(render_frame(panels, title, variable, full_domain))
         print(f"frame {str(t)[:13]}")
-    durations = [FRAME_MS] * (len(frames) - 1) + [LAST_FRAME_MS]
-    frames[0].save(
-        fp,
-        save_all=True,
-        append_images=frames[1:],
-        duration=durations,
-        loop=0,
-        optimize=True,
-    )
-    print(f"wrote {fp}")
+    save_gif(frames, fp)
+    print(f"wrote {fp} ({len(frames)} frames)")
 
 
 def main() -> None:
@@ -230,6 +278,12 @@ def main() -> None:
         action="store_true",
         help="show the whole DANRA domain (default: Denmark-centred)",
     )
+    parser.add_argument(
+        "--variable",
+        choices=list(VARIABLES),
+        default="lwavr0m",
+        help="the radiation flux (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     ds_clara = xr.open_zarr(args.workdir / "outputs" / "single_levels.zarr")
@@ -244,11 +298,13 @@ def main() -> None:
     )
     suffix = "_full_domain" if args.full_domain else ""
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    animate_longwave(
+    name = VARIABLES[args.variable]["name"]
+    animate_radiation(
         ds_clara,
         ds_danra,
+        args.variable,
         args.members,
-        args.out_dir / f"{prefix}_clouds{suffix}.gif",
+        args.out_dir / f"{prefix}_{name}{suffix}.gif",
         args.case_name,
         full_domain=args.full_domain,
     )
