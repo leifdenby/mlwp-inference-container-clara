@@ -218,3 +218,12 @@ and the training configs in `real-prob-lam/neural-lam-dev-building-ml-lams/confi
   - Forecast from a recent DINI run (2026-11-03T12Z, IFS 00Z cycle), and humidity layers and surface pressure in the members figure.
   - Model card draft: `artifact/model-card.yaml` → `MODEL_CARD.md` (`python -m clara_inference.model_card`). Variables grouped by height, single and pressure levels, with CF standard names (table v95); the tests check it against the datastore configs, `convert_output` and the loss weights.
     - Next: write `long_name`/`standard_name` (and a `height` coordinate for t2m/u10m/v10m) into the output files from the card; ship the card in the artifact and the Zenodo package.
+- 2026-11-20: experiment, CLARA on the whole DINI domain without retraining (branch `dini-domain-experiment`, `dev-utils/dini_domain/`).
+  - The weights don't depend on the grid size; only the U-Nets' parameter names, padding and attention levels (`--attn_res`, matched against resolutions) do. `make_dini_domain_artifact.py` derives an artifact:
+    - 1501 x 1261 grid, 2.5 km, in DINI's own projection (DANRA's projection can't cover DINI); statics from DINI (binary lsm, surface geopotential).
+    - 41,218 IFS boundary points within 400 km (DANRA: 14,858) in mllam-data-prep's order; it matched the datastore exactly.
+    - Graph with real-prob-lam's feature-map code: mesh 456 x 396 (training: 278 x 228). It must have even sizes: SongUNet rounds odd resolutions up in place, on the tensor GraphUnet2 keeps as its mesh shape.
+    - U-Net weights renamed level by level (shapes checked; identity on the training shapes); `--attn_res 114 58 30 16` for the trained attention levels.
+  - The grid U-Net's bottleneck attention (376 x 316 positions) needs 52 GB per head. `clara_inference.chunked_attention` (`--attention-chunk`) computes it for chunks of queries: same result (tested), less memory.
+  - 2026-11-18T06Z +24 h, 2 members: forecast 6 min, peak 114 of 119 GB (standard CLARA: 1.5 min, 34 GB). Realistic fields everywhere, no edge artefacts.
+  - Against DINI (the forecast it starts from) at +24 h, inside DANRA, DINI-domain vs standard CLARA: t2m 1.29 vs 1.12 K, mslp 1.25 vs 0.82 hPa, 10 m wind 1.64 vs 1.42 m/s, t850 1.06 vs 0.72 K, 850 hPa wind 3.4 vs 2.4 m/s. Outside DANRA a bit worse again (mslp 1.74 hPa, t850 1.28 K). Largest t2m/wind errors over the Alps and Norway's mountains. One case, 2 members.

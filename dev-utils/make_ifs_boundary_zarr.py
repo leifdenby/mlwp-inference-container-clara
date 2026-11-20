@@ -2,7 +2,8 @@
 Make an IFS boundary zarr for CLARA (the contract in
 `clara_inference/ifs_boundary.py`) from ECMWF open data: one 00/12 UTC
 forecast cycle, lead times every 6 h, on the native 0.25 deg open-data grid
-cropped to a box around the boundary (lat 40..72, lon -30..50).
+cropped to a box around the boundary (by default lat 40..72, lon -30..50;
+`--lat-range`/`--lon-range` for other domains).
 
 Adapted from `scripts/download_ifs_open_data_forecast.py` in real-prob-lam
 (which wrote 3-hourly lead times; CLARA was fine-tuned with 6-hourly ones).
@@ -56,7 +57,7 @@ def latest_cycle(source):
     )
 
 
-def _fetch(cycle, steps, source, **kwargs):
+def _fetch(cycle, steps, source, lat_range, lon_range, **kwargs):
     fieldlist = ekd.from_source(
         "ecmwf-open-data",
         source=source,
@@ -76,15 +77,20 @@ def _fetch(cycle, steps, source, **kwargs):
     lon = ds.longitude.values
     ds = ds.assign_coords(longitude=np.where(lon >= 180, lon - 360, lon))
     ds = ds.sortby("longitude").sortby("latitude")
-    return ds.sel(latitude=slice(*LAT_RANGE), longitude=slice(*LON_RANGE))
+    return ds.sel(latitude=slice(*lat_range), longitude=slice(*lon_range))
 
 
-def make_boundary(cycle, max_lead_hours, source):
+def make_boundary(
+    cycle, max_lead_hours, source, lat_range=LAT_RANGE, lon_range=LON_RANGE
+):
     if cycle.hour not in (0, 12) or cycle.minute:
         raise ValueError(f"CLARA uses 00/12 UTC cycles, got {cycle}")
     steps = list(range(0, max_lead_hours + 1, 6))
     print(f"IFS open data ({source}): cycle {cycle}, steps {steps} h")
-    ds_sl = _fetch(cycle, steps, source, levtype="sfc", param=list(SL_PARAMS))
+    box = dict(lat_range=lat_range, lon_range=lon_range)
+    ds_sl = _fetch(
+        cycle, steps, source, levtype="sfc", param=list(SL_PARAMS), **box
+    )
     ds_pl = _fetch(
         cycle,
         steps,
@@ -92,6 +98,7 @@ def make_boundary(cycle, max_lead_hours, source):
         levtype="pl",
         param=list(PL_PARAMS),
         levelist=LEVELS,
+        **box,
     )
     ds_pl["gh"] = ds_pl["gh"] * GRAVITY
     ds = xr.merge(
@@ -99,9 +106,7 @@ def make_boundary(cycle, max_lead_hours, source):
         compat="override",
     )
     ds["geopotential"].attrs.update(units="m**2 s**-2")
-    ds = ds.rename(
-        forecast_reference_time="time", step="prediction_timedelta"
-    )
+    ds = ds.rename(forecast_reference_time="time", step="prediction_timedelta")
     ds = ds.assign_coords(
         time=ds.time.values.astype("datetime64[ns]"),
         prediction_timedelta=ds.prediction_timedelta.values.astype(
@@ -109,9 +114,7 @@ def make_boundary(cycle, max_lead_hours, source):
         ),
     )
     keep = list(SL_PARAMS.values()) + list(PL_PARAMS.values())
-    ds = ds[keep].drop_vars(
-        [c for c in ds.coords if c not in ds[keep].dims]
-    )
+    ds = ds[keep].drop_vars([c for c in ds.coords if c not in ds[keep].dims])
     for name in ds.variables:
         ds[name].encoding = {}
     ds.attrs = dict(
@@ -137,6 +140,20 @@ def main():
         default="azure",
         help="open-data mirror (default: %(default)s)",
     )
+    parser.add_argument(
+        "--lat-range",
+        type=float,
+        nargs=2,
+        default=LAT_RANGE,
+        help="latitude box (default: %(default)s, the DANRA boundary)",
+    )
+    parser.add_argument(
+        "--lon-range",
+        type=float,
+        nargs=2,
+        default=LON_RANGE,
+        help="longitude box, -180..180 (default: %(default)s)",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
@@ -153,7 +170,13 @@ def main():
         if not args.overwrite:
             raise FileExistsError(f"{args.output} exists (--overwrite)")
         shutil.rmtree(args.output)
-    ds = make_boundary(cycle, args.max_lead_hours, args.source)
+    ds = make_boundary(
+        cycle,
+        args.max_lead_hours,
+        args.source,
+        lat_range=tuple(args.lat_range),
+        lon_range=tuple(args.lon_range),
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with ProgressBar():
         ds.to_zarr(args.output, mode="w", consolidated=True)

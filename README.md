@@ -392,6 +392,7 @@ variable, which wins over the default. This is the same convention as ANNA
 | `--artifact-path` | `CLARA_ARTIFACT_PATH` | `inference_artifact` | the inference artifact, including the checkpoint |
 | `--skip-completed` | `CLARA_SKIP_COMPLETED` | `false` | skip the stages already completed in the workdir |
 | `--clip-to-physical-ranges` | `CLARA_CLIP_TO_PHYSICAL_RANGES` | `false` | **post-processing**, after the model's predictions: clip `r` to [0, 1] and `swavr0m` to ≥ 0 in the outputs (see [Post-processing](#post-processing-off-by-default)) |
+| `--attention-chunk` | `CLARA_ATTENTION_CHUNK` | `0` | compute the U-Nets' self-attention for chunks of this many queries: the same result with less memory, needed for domains much larger than DANRA (`0`: all at once) |
 | `--output-s3-prefix` | `CLARA_OUTPUT_S3_PREFIX` | | also upload the outputs to `{prefix}/<analysis time>/`, replacing an earlier upload for that analysis time |
 | `--input-s3-endpoint-url` | `CLARA_INPUT_S3_ENDPOINT_URL` | (AWS config) | S3 endpoint for reading DINI and IFS |
 | `--input-aws-profile` | `CLARA_INPUT_AWS_PROFILE` | (AWS config) | AWS profile for reading DINI and IFS |

@@ -167,6 +167,15 @@ def build_parser():
         "the model doesn't constrain (default: off)",
     )
     parser.add_argument(
+        "--attention-chunk",
+        type=int,
+        default=0,
+        help="compute the U-Nets' self-attention for chunks of this many "
+        "queries (same result, less memory; needed for domains much larger "
+        "than DANRA, see clara_inference.chunked_attention; default: 0, "
+        "all at once)",
+    )
+    parser.add_argument(
         "--output-s3-prefix",
         help="also upload the outputs to {prefix}/{analysis time}/ (e.g. "
         "s3://clara-forecasts/2026-10-01T060000Z/), replacing an earlier "
@@ -394,13 +403,17 @@ class Forecast:
             "NEURAL_LAM_STRICT_LOAD": "1",
             # no metrics/plots against the (DINI) "targets" at the end
             "NEURAL_LAM_SKIP_TEST_METRICS": "1",
+            # read by clara_inference.chunked_attention (ENV_CHUNK)
+            "CLARA_ATTENTION_CHUNK": self.args.attention_chunk,
         }
         self.run_step(
             "3. forecast",
             [
                 sys.executable,
                 "-m",
-                "neural_lam.train_model",
+                # neural_lam.train_model, optionally with chunked U-Net
+                # attention (CLARA_ATTENTION_CHUNK, for larger domains)
+                "clara_inference.chunked_attention",
                 "--config_path",
                 self.nl_config,
                 *map(str, self.model["train_model_args"]),
